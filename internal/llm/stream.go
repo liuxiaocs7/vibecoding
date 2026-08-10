@@ -1,0 +1,220 @@
+package llm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/ymhhh/go-common/logger"
+)
+
+// ChatStream streams model tokens via onDelta (may be called many times).
+// Returns the full concatenated text. Falls back to non-stream Chat when
+// streaming is unavailable (e.g. Gemini) — then onDelta is invoked once.
+func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onDelta func(string)) (string, error) {
+	if onDelta == nil {
+		onDelta = func(string) {}
+	}
+	cfg := req.ModelConfig
+	start := time.Now()
+	provider := ""
+	modelName := ""
+	var (
+		text string
+		err  error
+	)
+	switch {
+	case strings.TrimSpace(cfg.OpenAIBaseURL) != "" && strings.TrimSpace(cfg.OpenAIAPIKey) != "":
+		provider = "openai"
+		modelName = firstNonEmpty(cfg.OpenAIModel, "gpt-4o")
+		var gotDelta bool
+		text, err = c.streamOpenAI(ctx, req, func(delta string) {
+			if delta != "" {
+				gotDelta = true
+			}
+			onDelta(delta)
+		})
+		// Some gateways reject stream or json+stream — fall back once (only if nothing streamed).
+		if err != nil && !gotDelta {
+			logger.L().WithError(err).Warn("llm stream failed; falling back to non-stream")
+			text, err = c.chatOpenAI(ctx, req)
+			if err == nil && text != "" {
+				onDelta(text)
+			}
+		}
+	case os.Getenv("GEMINI_API_KEY") != "":
+		provider = "gemini"
+		modelName = "gemini-2.0-flash"
+		text, err = c.chatGemini(ctx, os.Getenv("GEMINI_API_KEY"), req)
+		if err == nil && text != "" {
+			onDelta(text)
+		}
+	default:
+		err = fmt.Errorf("no LLM configured: set OpenAPI Base URL + API Key in settings, or GEMINI_API_KEY")
+	}
+	entry := logger.L().WithFields(logger.Fields{
+		"provider":    provider,
+		"model":       modelName,
+		"json_mode":   req.JSONMode,
+		"stream":      true,
+		"msg_count":   len(req.Messages),
+		"duration_ms": time.Since(start).Milliseconds(),
+	})
+	if err != nil {
+		entry.WithError(err).Warn("llm chat stream failed")
+		return "", err
+	}
+	entry.WithField("reply_chars", len(text)).Info("llm chat stream ok")
+	return text, nil
+}
+
+func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func(string)) (string, error) {
+	if err := ValidateBaseURL(req.ModelConfig.OpenAIBaseURL); err != nil {
+		return "", err
+	}
+	msgs := make([]ChatMessage, 0, len(req.Messages)+1)
+	if req.System != "" {
+		msgs = append(msgs, ChatMessage{Role: "system", Content: req.System})
+	}
+	msgs = append(msgs, req.Messages...)
+
+	temp := req.Temperature
+	if temp == 0 && req.ModelConfig.Temperature != 0 {
+		temp = req.ModelConfig.Temperature
+	}
+	body := map[string]any{
+		"model":    firstNonEmpty(req.ModelConfig.OpenAIModel, "gpt-4o"),
+		"messages": msgs,
+		"stream":   true,
+	}
+	if !req.OmitTemperature {
+		body["temperature"] = temp
+	}
+	if req.JSONMode {
+		body["response_format"] = map[string]string{"type": "json_object"}
+	}
+
+	doStream := func(payload map[string]any) (string, int, string, error) {
+		b, _ := json.Marshal(payload)
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, completionsURL(req.ModelConfig.OpenAIBaseURL), bytes.NewReader(b))
+		if err != nil {
+			return "", 0, "", err
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+req.ModelConfig.OpenAIAPIKey)
+		httpReq.Header.Set("Accept", "text/event-stream")
+
+		resp, err := c.HTTP.Do(httpReq)
+		if err != nil {
+			return "", 0, "", err
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode >= 300 {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+			return "", resp.StatusCode, string(raw), fmt.Errorf("OpenAPI stream failed [%d]: %s", resp.StatusCode, truncate(string(raw), 300))
+		}
+
+		// Some proxies return JSON error with 200 — detect non-SSE briefly.
+		ct := strings.ToLower(resp.Header.Get("Content-Type"))
+		if strings.Contains(ct, "application/json") && !strings.Contains(ct, "event-stream") {
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+			return "", resp.StatusCode, string(raw), fmt.Errorf("OpenAPI stream returned JSON instead of SSE: %s", truncate(string(raw), 300))
+		}
+
+		full, err := readOpenAISSE(resp.Body, onDelta)
+		return full, resp.StatusCode, "", err
+	}
+
+	full, status, errBody, err := doStream(body)
+	if err != nil {
+		// Retry once without temperature for joybuilder-like models.
+		if status >= 300 && !req.OmitTemperature && strings.Contains(strings.ToLower(errBody), "temperature") {
+			retryBody := map[string]any{
+				"model":    body["model"],
+				"messages": body["messages"],
+				"stream":   true,
+			}
+			if req.JSONMode {
+				retryBody["response_format"] = body["response_format"]
+			}
+			full, status, errBody, err = doStream(retryBody)
+		}
+	}
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(full) == "" {
+		return "", fmt.Errorf("no response generated")
+	}
+	_ = status
+	_ = errBody
+	return full, nil
+}
+
+func readOpenAISSE(r io.Reader, onDelta func(string)) (string, error) {
+	sc := bufio.NewScanner(r)
+	// Allow larger SSE lines (some gateways pack big chunks).
+	buf := make([]byte, 0, 64*1024)
+	sc.Buffer(buf, 2<<20)
+
+	var full strings.Builder
+	for sc.Scan() {
+		line := sc.Text()
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "" || data == "[DONE]" {
+			if data == "[DONE]" {
+				break
+			}
+			continue
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+			Error *struct {
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if chunk.Error != nil && chunk.Error.Message != "" {
+			return full.String(), fmt.Errorf("OpenAPI stream error: %s", chunk.Error.Message)
+		}
+		if len(chunk.Choices) == 0 {
+			continue
+		}
+		delta := chunk.Choices[0].Delta.Content
+		if delta == "" {
+			delta = chunk.Choices[0].Message.Content
+		}
+		if delta == "" {
+			continue
+		}
+		full.WriteString(delta)
+		onDelta(delta)
+	}
+	if err := sc.Err(); err != nil {
+		return full.String(), err
+	}
+	return full.String(), nil
+}
