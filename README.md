@@ -83,3 +83,7 @@ Then configure repo paths as `/Codes/...` inside the app.
 - Default bind is localhost-only.
 - API keys never persist in the browser; they are stored in the local SQLite DB.
 - Auto-Dev only writes inside configured repository paths.
+
+## License
+
+[MIT](./LICENSE) © 2026 Henry Huang
