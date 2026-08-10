@@ -1,0 +1,217 @@
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { GoogleGenAI } from '@google/genai';
+import { createServer as createViteServer } from 'vite';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(express.json({ limit: '10mb' }));
+
+  // Helper for Gemini AI client lazy instantiation
+  const getGeminiAI = () => {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error('GEMINI_API_KEY environment variable is not configured.');
+    }
+    return new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+  };
+
+  // Health check
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  });
+
+  // Test OpenAPI Endpoint connection
+  app.post('/api/test-openapi', async (req, res) => {
+    const { openAIBaseUrl, openAIApiKey, openAIModel } = req.body;
+    try {
+      if (!openAIBaseUrl || !openAIApiKey) {
+        return res.status(400).json({ success: false, error: 'OpenAPI Base URL and API Key are required.' });
+      }
+
+      const cleanUrl = openAIBaseUrl.replace(/\/+$/, '');
+      const targetUrl = cleanUrl.endsWith('/chat/completions')
+        ? cleanUrl
+        : `${cleanUrl}/chat/completions`;
+
+      const modelToUse = openAIModel || 'gpt-4o-mini';
+
+      const response = await fetch(targetUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${openAIApiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelToUse,
+          messages: [
+            { role: 'system', content: 'You are a test assistant.' },
+            { role: 'user', content: 'Reply with the word OK if you receive this message.' },
+          ],
+          max_tokens: 20,
+        }),
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        return res.status(response.status).json({
+          success: false,
+          error: `HTTP ${response.status}: ${errText.slice(0, 200)}`,
+        });
+      }
+
+      const data: any = await response.json();
+      const reply = data.choices?.[0]?.message?.content || 'Connection successful';
+      return res.json({ success: true, message: reply });
+    } catch (error: any) {
+      return res.status(500).json({ success: false, error: error.message || 'Failed to connect to OpenAPI endpoint' });
+    }
+  });
+
+  // LLM Chat & Spec Generator endpoint
+  app.post('/api/chat', async (req, res) => {
+    try {
+      const {
+        prompt,
+        messages = [],
+        modelConfig = {},
+        issueTitle,
+        issueDescription,
+        associatedRepos = [],
+        generateSpec = false,
+      } = req.body;
+
+      const systemInstruction = `You are a Senior VibeCoding AI Architect & Staff Software Engineer.
+Your job is to assist the developer in analyzing requirements, discussing software architecture, and creating/updating comprehensive "Development Specification Documents" (待开发文档).
+
+When generateSpec is true or when asked to create/update a dev spec, return your output formatted in Markdown containing:
+1. Executive Summary (概述)
+2. Architecture Design & Sequence (架构与设计)
+3. Target Files & Changes (修改文件与差异策略)
+4. Implementation Steps (实施步骤)
+5. Test Cases & Verification (测试用例)
+
+Issue Context:
+- Title: ${issueTitle || 'N/A'}
+- Description: ${issueDescription || 'N/A'}
+- Associated Local Repositories: ${associatedRepos.join(', ') || 'N/A'} (Agent 将直接分析本地磁盘目录源码，创建分支并生成改动方案)
+`;
+
+      let replyText = '';
+
+      if (modelConfig?.openAIBaseUrl && modelConfig?.openAIApiKey) {
+        // Use custom OpenAPI endpoint (e.g. OpenAI, DeepSeek, Qwen)
+        const cleanUrl = modelConfig.openAIBaseUrl.replace(/\/+$/, '');
+        const targetUrl = cleanUrl.endsWith('/chat/completions')
+          ? cleanUrl
+          : `${cleanUrl}/chat/completions`;
+
+        const apiMessages = [
+          { role: 'system', content: systemInstruction },
+          ...messages.map((m: any) => ({
+            role: m.sender === 'user' ? 'user' : 'assistant',
+            content: m.text,
+          })),
+        ];
+
+        if (prompt) {
+          apiMessages.push({ role: 'user', content: prompt });
+        }
+
+        const response = await fetch(targetUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${modelConfig.openAIApiKey}`,
+          },
+          body: JSON.stringify({
+            model: modelConfig.openAIModel || 'gpt-4o',
+            messages: apiMessages,
+            temperature: modelConfig.temperature ?? 0.7,
+          }),
+        });
+
+        if (!response.ok) {
+          const errText = await response.text();
+          throw new Error(`OpenAPI request failed [${response.status}]: ${errText.slice(0, 200)}`);
+        }
+
+        const data: any = await response.json();
+        replyText = data.choices?.[0]?.message?.content || 'No response generated.';
+      } else if (process.env.GEMINI_API_KEY) {
+        // Fallback to server-side Gemini if API key configured on environment
+        const ai = getGeminiAI();
+        const formattedPrompt = `${systemInstruction}\n\nChat History:\n${messages.map((m: any) => `${m.sender.toUpperCase()}: ${m.text}`).join('\n')}\nUSER: ${prompt}`;
+
+        const response = await ai.models.generateContent({
+          model: 'gemini-3.6-flash',
+          contents: formattedPrompt,
+        });
+
+        replyText = response.text || 'No response generated.';
+      } else {
+        throw new Error('未检测到有效的大模型 API Key。请点击顶部【大模型设置】配置 OpenAPI Base URL 与 API Key。');
+      }
+
+      return res.json({ text: replyText });
+    } catch (error: any) {
+      console.error('API /api/chat error:', error);
+      return res.status(500).json({ error: error.message || 'Internal server error during chat' });
+    }
+  });
+
+  // Simulated Auto-Dev Execution endpoint
+  app.post('/api/auto-dev/execute', async (req, res) => {
+    try {
+      const { issueId, repoNames = [], devSpec, autoDevPrefix = 'ai-dev/' } = req.body;
+      
+      const steps = [
+        { phase: 'analyzing', message: '正在解析待开发文档 (Dev Spec) 与依赖分支拓扑...', delay: 600 },
+        { phase: 'branching', message: `根据工程分支规范自动切换分支: git checkout -b ${autoDevPrefix}issue-${issueId.slice(0, 6)}`, delay: 800 },
+        { phase: 'coding', message: `针对仓库 [${repoNames.join(', ') || 'main-repo'}] 执行智能代码打补丁与重构...`, delay: 1200 },
+        { phase: 'testing', message: '启动 AST 校验与并发 Jest / Vitest 单元测试套件...', delay: 1500 },
+        { phase: 'linting', message: '运行 ESLint / TypeScript 静态类型推断与代码风格检查...', delay: 1000 },
+        { phase: 'committing', message: `生成 Git Commit 并推送至 ${autoDevPrefix}issue-${issueId.slice(0, 6)}，创建 Pull Request...`, delay: 800 },
+        { phase: 'completed', message: '开发与打包测试已顺利通过！任务已自动更名为【待评审】。', delay: 500 },
+      ];
+
+      return res.json({ success: true, executionPlan: steps });
+    } catch (error: any) {
+      return res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Vite integration
+  if (process.env.NODE_ENV !== 'production') {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Vibecoding Dashboard Server listening on http://0.0.0.0:${PORT}`);
+  });
+}
+
+startServer();

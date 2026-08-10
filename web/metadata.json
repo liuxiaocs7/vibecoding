@@ -1,0 +1,6 @@
+{
+  "name": "Vibecoding Dashboard",
+  "description": "An AI-assisted autonomous development board with git repository management, issue lifecycle Kanban, AI spec doc generator, autonomous dev execution logs, review flow, and OpenAPI custom LLM settings.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

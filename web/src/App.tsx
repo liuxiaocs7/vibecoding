@@ -1,0 +1,677 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Project, Issue, ModelConfig, IssueStatus } from './types';
+import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './lib/storage';
+import { Language, ThemeStyle, getTranslation } from './lib/i18n';
+import { THEME_CONFIGS } from './lib/theme';
+import { api, subscribeJobEvents } from './lib/api';
+import { KanbanBoard } from './components/KanbanBoard';
+import { IssueDetailModal } from './components/IssueDetailModal';
+import { ProjectModal } from './components/ProjectModal';
+import { CreateIssueModal } from './components/CreateIssueModal';
+import { GlobalSettingsModal } from './components/GlobalSettingsModal';
+import {
+  FolderKanban,
+  Settings,
+  Plus,
+  Sliders,
+  ChevronRight,
+  Globe,
+  Palette,
+  Check,
+  Loader2,
+  AlertCircle,
+  X,
+} from 'lucide-react';
+
+const DEFAULT_MODEL: ModelConfig = {
+  useCustomOpenAI: true,
+  openAIBaseUrl: 'https://api.openai.com/v1',
+  openAIApiKey: '',
+  openAIModel: 'gpt-4o',
+  temperature: 0.7,
+};
+
+export default function App() {
+  const [globalModelConfig, setGlobalModelConfig] = useState<ModelConfig>(DEFAULT_MODEL);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [issues, setIssues] = useState<Issue[]>([]);
+  const [activeProjectId, setActiveProjectId] = useState<string>('');
+  const [language, setLanguage] = useState<Language>(loadLanguage);
+  const [themeStyle, setThemeStyle] = useState<ThemeStyle>(loadThemeStyle);
+  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [llmReady, setLlmReady] = useState(false);
+  const [toast, setToast] = useState<{ type: 'error' | 'info' | 'success'; text: string } | null>(null);
+
+  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
+  const [isCreateIssueModalOpen, setIsCreateIssueModalOpen] = useState(false);
+  const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
+
+  const autoDevJobs = useRef<Map<string, string>>(new Map()); // issueId -> jobId
+  const unsubscribers = useRef<Map<string, () => void>>(new Map());
+
+  const t = getTranslation(language);
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+
+  const showToast = useCallback((type: 'error' | 'info' | 'success', text: string) => {
+    setToast({ type, text });
+    window.setTimeout(() => setToast(null), 4000);
+  }, []);
+
+  const refreshIssues = useCallback(async (projectId?: string) => {
+    const list = await api.listIssues(projectId);
+    setIssues(list);
+    setSelectedIssue((prev) => (prev ? list.find((i) => i.id === prev.id) || prev : null));
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        setLoading(true);
+        const [health, model, prefs, projs] = await Promise.all([
+          api.health(),
+          api.getModel(),
+          api.getUIPrefs(),
+          api.listProjects(),
+        ]);
+        if (cancelled) return;
+        setLlmReady(!!health.llmConfigured);
+        setGlobalModelConfig(model);
+        setProjects(projs);
+        const active =
+          prefs.activeProjectId && projs.some((p) => p.id === prefs.activeProjectId)
+            ? prefs.activeProjectId
+            : projs[0]?.id || '';
+        setActiveProjectId(active);
+        if (prefs.language === 'en' || prefs.language === 'zh') {
+          setLanguage(prefs.language);
+        }
+        if (prefs.themeStyle && ['glass', 'slate', 'light', 'oled', 'oat'].includes(prefs.themeStyle)) {
+          setThemeStyle(prefs.themeStyle as ThemeStyle);
+        }
+        if (active) {
+          const iss = await api.listIssues(active);
+          if (!cancelled) setIssues(iss);
+        } else {
+          setIssues([]);
+        }
+        setLoadError('');
+      } catch (err: any) {
+        if (!cancelled) setLoadError(err.message || getTranslation(loadLanguage()).loadBackendFailed);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unsubscribers.current.forEach((u) => u());
+      unsubscribers.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    saveLanguage(language);
+  }, [language]);
+
+  useEffect(() => {
+    saveThemeStyle(themeStyle);
+    if (themeConfig.isLight) {
+      document.documentElement.classList.remove('dark');
+    } else {
+      document.documentElement.classList.add('dark');
+    }
+  }, [themeStyle, themeConfig.isLight]);
+
+  useEffect(() => {
+    if (!activeProjectId && !language && !themeStyle) return;
+    api
+      .putUIPrefs({ language, themeStyle, activeProjectId })
+      .catch(() => undefined);
+  }, [language, themeStyle, activeProjectId]);
+
+  useEffect(() => {
+    if (!activeProjectId) {
+      setIssues([]);
+      return;
+    }
+    refreshIssues(activeProjectId).catch((err) => showToast('error', err.message));
+  }, [activeProjectId, refreshIssues, showToast]);
+
+  const activeProject = projects.find((p) => p.id === activeProjectId) || projects[0];
+  const activeIssues = issues.filter((i) => i.projectId === activeProject?.id);
+
+  const effectiveModelConfig: ModelConfig =
+    activeProject?.useCustomModelConfig && activeProject?.customModelConfig
+      ? activeProject.customModelConfig
+      : globalModelConfig;
+
+  const patchIssueLocal = useCallback((updated: Issue) => {
+    setIssues((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
+    setSelectedIssue((prev) => (prev?.id === updated.id ? updated : prev));
+  }, []);
+
+  const handleSaveGlobalConfig = async (newConfig: ModelConfig) => {
+    try {
+      const saved = await api.putModel(newConfig);
+      setGlobalModelConfig(saved);
+      setLlmReady(!!saved.keyConfigured);
+      showToast('success', t.llmSettingsSaved);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  const handleSaveProject = async (projectData: Partial<Project>) => {
+    try {
+      if (editingProject) {
+        const saved = await api.updateProject(editingProject.id, { ...editingProject, ...projectData });
+        setProjects((prev) => prev.map((p) => (p.id === saved.id ? saved : p)));
+      } else {
+        const saved = await api.createProject(projectData);
+        setProjects((prev) => [...prev, saved]);
+        setActiveProjectId(saved.id);
+      }
+      setEditingProject(null);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  const handleDeleteProject = async (projectId: string) => {
+    try {
+      await api.deleteProject(projectId);
+      setProjects((prev) => {
+        const next = prev.filter((p) => p.id !== projectId);
+        if (activeProjectId === projectId) {
+          setActiveProjectId(next[0]?.id || '');
+        }
+        return next;
+      });
+      showToast('success', t.projectDeleted);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  const handleCreateIssue = async (issueData: Partial<Issue>) => {
+    try {
+      const saved = await api.createIssue(issueData);
+      setIssues((prev) => [saved, ...prev]);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  const handleUpdateIssue = useCallback(
+    async (updatedIssue: Issue) => {
+      // Optimistic local update with functional setState
+      patchIssueLocal(updatedIssue);
+      try {
+        const saved = await api.updateIssue(updatedIssue.id, updatedIssue);
+        patchIssueLocal(saved);
+      } catch (err: any) {
+        showToast('error', err.message);
+        if (activeProjectId) {
+          refreshIssues(activeProjectId).catch(() => undefined);
+        }
+      }
+    },
+    [activeProjectId, patchIssueLocal, refreshIssues, showToast]
+  );
+
+  const handleStartAutoDev = async (issueId: string) => {
+    const targetIssue = issues.find((i) => i.id === issueId);
+    if (!targetIssue) return;
+    if (targetIssue.status === 'in_progress' && autoDevJobs.current.has(issueId)) {
+      showToast('info', t.autoDevAlreadyRunning);
+      return;
+    }
+    if (!targetIssue.devSpec) {
+      showToast('error', t.autoDevNeedsSpec);
+      return;
+    }
+    if (!targetIssue.associatedRepoIds?.length) {
+      showToast('error', t.autoDevNeedsRepo);
+      return;
+    }
+
+    try {
+      const job = await api.startAutoDev(issueId);
+      autoDevJobs.current.set(issueId, job.id);
+      patchIssueLocal({
+        ...targetIssue,
+        status: 'in_progress',
+        autoDevProgress: 5,
+        updatedAt: new Date().toISOString(),
+      });
+
+      const unsub = subscribeJobEvents(job.id, async (ev) => {
+        const apply = (iss: Issue): Issue => {
+          if (iss.id !== issueId) return iss;
+          let next = { ...iss };
+          if (typeof ev.progress === 'number') next.autoDevProgress = ev.progress;
+          if (ev.log) next.autoDevLogs = [...(next.autoDevLogs || []), ev.log];
+          else if (ev.message) {
+            next.autoDevLogs = [
+              ...(next.autoDevLogs || []),
+              {
+                id: `log-${Date.now()}-${Math.random()}`,
+                timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+                phase: (ev.phase as any) || 'analyzing',
+                message: ev.message,
+                details: ev.details,
+              },
+            ];
+          }
+          if (ev.prInfo) next.prInfo = ev.prInfo;
+          if (ev.type === 'done' && ev.status === 'completed') {
+            next.status = 'in_review';
+            next.autoDevProgress = 100;
+          }
+          if (ev.type === 'error' || ev.status === 'failed') {
+            next.status = 'backlog';
+          }
+          if (ev.status === 'cancelled') {
+            next.status = 'backlog';
+          }
+          return next;
+        };
+        if (ev.type === 'error' || ev.status === 'failed') {
+          showToast('error', ev.error || t.autoDevFailed);
+        }
+        setIssues((prev) => prev.map(apply));
+        setSelectedIssue((prev) => (prev ? apply(prev) : prev));
+
+        if (ev.type === 'done' || ev.type === 'error' || ev.status === 'cancelled' || ev.status === 'failed') {
+          autoDevJobs.current.delete(issueId);
+          unsubscribers.current.get(issueId)?.();
+          unsubscribers.current.delete(issueId);
+          try {
+            const fresh = await api.listIssues(activeProjectId);
+            setIssues(fresh);
+            setSelectedIssue((prev) => (prev ? fresh.find((i) => i.id === prev.id) || prev : null));
+          } catch {
+            /* ignore */
+          }
+        }
+      });
+      unsubscribers.current.set(issueId, unsub);
+    } catch (err: any) {
+      showToast('error', err.message || t.autoDevStartFailed);
+    }
+  };
+
+  const handleCancelAutoDev = async (issueId: string) => {
+    const jobId = autoDevJobs.current.get(issueId);
+    if (!jobId) return;
+    try {
+      await api.cancelAutoDev(jobId);
+      showToast('info', t.autoDevCancelRequested);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  const handleMoveColumn = async (issueId: string, newStatus: IssueStatus) => {
+    const target = issues.find((i) => i.id === issueId);
+    if (!target) return;
+    if (newStatus === 'backlog') {
+      if (!target.devSpec?.rawMarkdown?.trim()) {
+        showToast('error', t.backlogNeedsSpec);
+        return;
+      }
+      if (!target.associatedRepoIds?.length) {
+        showToast('error', t.backlogNeedsRepo);
+        return;
+      }
+    }
+    if (newStatus === 'in_review' && !target.prInfo) {
+      showToast('error', t.reviewNeedsAutoDev);
+      return;
+    }
+    await handleUpdateIssue({ ...target, status: newStatus, updatedAt: new Date().toISOString() });
+  };
+
+  const handleDeleteIssue = async (issueId: string) => {
+    try {
+      await api.deleteIssue(issueId);
+      setIssues((prev) => prev.filter((i) => i.id !== issueId));
+      if (selectedIssue?.id === issueId) setSelectedIssue(null);
+    } catch (err: any) {
+      showToast('error', err.message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-200">
+        <Loader2 className="w-6 h-6 animate-spin mr-2" /> {t.loadingApp}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-950 text-slate-200 gap-3 p-6">
+        <AlertCircle className="w-8 h-8 text-rose-400" />
+        <p className="text-sm">{t.backendUnavailable}: {loadError}</p>
+        <p className="text-xs text-slate-400">{t.startBackendHint}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`flex h-screen w-screen overflow-hidden font-sans ${themeConfig.appBg} transition-colors duration-300`}>
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-[100] max-w-sm rounded-xl border px-4 py-3 text-sm shadow-xl flex items-start gap-2 ${
+            toast.type === 'error'
+              ? 'bg-rose-950/90 border-rose-500/40 text-rose-100'
+              : toast.type === 'success'
+              ? 'bg-emerald-950/90 border-emerald-500/40 text-emerald-100'
+              : 'bg-slate-900/90 border-slate-500/40 text-slate-100'
+          }`}
+        >
+          <span className="flex-1 select-text">{toast.text}</span>
+          <button onClick={() => setToast(null)}>
+            <X className="w-4 h-4 opacity-70" />
+          </button>
+        </div>
+      )}
+
+      <aside className={`w-64 border-r flex flex-col justify-between shrink-0 z-20 ${themeConfig.sidebarBg} transition-colors duration-300`}>
+        <div>
+          <div className={`p-6 flex items-center justify-between border-b ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+            <div className="flex items-center space-x-3">
+              <div className="w-9 h-9 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center font-bold text-xl text-white shadow-lg shadow-indigo-500/30">
+                V
+              </div>
+              <div>
+                <span className={`text-base font-bold tracking-tight block ${themeConfig.textPrimary}`}>Vibecoding</span>
+                <span className={`text-[10px] uppercase tracking-widest font-mono ${themeConfig.textMuted}`}>
+                  {t.subtitle}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <nav className="p-4 space-y-6">
+            <div>
+              <div className={`flex items-center justify-between text-[10px] uppercase tracking-widest font-bold mb-3 px-2 ${themeConfig.textMuted}`}>
+                <span>{t.workspaceProjects}</span>
+                <button
+                  onClick={() => {
+                    setEditingProject(null);
+                    setIsProjectModalOpen(true);
+                  }}
+                  className={`p-1 rounded transition-colors ${themeConfig.sidebarItemHover}`}
+                  title={t.newProject}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
+                {projects.length === 0 && (
+                  <div className={`text-xs px-2 py-3 ${themeConfig.textMuted}`}>
+                    {t.noProjectsYet}
+                  </div>
+                )}
+                {projects.map((proj) => {
+                  const isActive = proj.id === activeProject?.id;
+                  return (
+                    <div
+                      key={proj.id}
+                      onClick={() => setActiveProjectId(proj.id)}
+                      className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-1 group ${
+                        isActive ? themeConfig.sidebarItemActive : themeConfig.sidebarItemHover
+                      }`}
+                    >
+                      <div className="flex items-center space-x-2.5 overflow-hidden min-w-0">
+                        <div className={`w-2 h-2 rounded-full shrink-0 ${isActive ? 'bg-emerald-400 animate-pulse' : 'bg-indigo-400/50'}`} />
+                        <span className="text-xs font-medium truncate">{proj.name}</span>
+                      </div>
+                      <div className="flex items-center gap-0.5 shrink-0">
+                        <span className={`text-[10px] font-mono ${themeConfig.textMuted}`}>{proj.gitRepos.length}</span>
+                        <button
+                          type="button"
+                          title={t.projectSettings}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveProjectId(proj.id);
+                            setEditingProject(proj);
+                            setIsProjectModalOpen(true);
+                          }}
+                          className={`p-1 rounded-lg transition-opacity ${
+                            isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+                          } ${themeConfig.textMuted} hover:text-indigo-500 hover:bg-black/5 dark:hover:bg-white/10`}
+                        >
+                          <Settings className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            <div className={`pt-2 border-t space-y-2 ${themeConfig.subtleBorder}`}>
+              <div className={`text-[10px] uppercase tracking-widest font-bold mb-2.5 px-2 ${themeConfig.textMuted}`}>
+                {t.systemSettings}
+              </div>
+              <button
+                onClick={() => setIsGlobalSettingsOpen(true)}
+                className={`w-full p-3 rounded-xl transition-colors flex items-center justify-between border border-transparent ${themeConfig.sidebarItemHover}`}
+              >
+                <div className="flex items-center space-x-2.5">
+                  <Sliders className="w-4 h-4 text-indigo-500" />
+                  <span className="text-xs font-medium">{t.globalLLMConfig}</span>
+                </div>
+                <ChevronRight className={`w-3.5 h-3.5 ${themeConfig.textMuted}`} />
+              </button>
+              {activeProject && (
+                <button
+                  onClick={() => handleDeleteProject(activeProject.id)}
+                  className={`w-full p-3 rounded-xl transition-colors flex items-center text-xs text-rose-400 border border-transparent ${themeConfig.sidebarItemHover}`}
+                >
+                  {t.deleteCurrentProject}
+                </button>
+              )}
+            </div>
+          </nav>
+        </div>
+
+        <div className={`p-4 border-t ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+          <div
+            className={`rounded-xl p-3 flex items-center space-x-2.5 border ${
+              llmReady
+                ? 'bg-emerald-500/10 border-emerald-500/30'
+                : 'bg-amber-500/10 border-amber-500/30'
+            }`}
+          >
+            <div className={`w-2 h-2 rounded-full shrink-0 ${llmReady ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <div className="overflow-hidden">
+              <div
+                className={`text-[10px] font-mono font-semibold truncate uppercase ${
+                  llmReady ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
+                }`}
+              >
+                {llmReady
+                  ? `${t.openaiPrefix}: ${effectiveModelConfig.openAIModel || t.customModel}`
+                  : t.llmNotConfigured}
+              </div>
+              <div className={`text-[9px] truncate ${themeConfig.textMuted}`}>
+                {llmReady
+                  ? effectiveModelConfig.keyHint || effectiveModelConfig.openAIBaseUrl || t.llmReady
+                  : t.openSettingsAddKey}
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <main className="flex-1 flex flex-col overflow-hidden bg-transparent">
+        <header className={`relative z-30 h-16 border-b px-8 flex items-center justify-between shrink-0 ${themeConfig.headerBg} transition-colors duration-300`}>
+          <div className="flex items-center space-x-4">
+            <h2 className={`text-lg font-bold tracking-tight flex items-center gap-2 ${themeConfig.textPrimary}`}>
+              <FolderKanban className="w-5 h-5 text-indigo-500" />
+              {activeProject?.name || t.workspaceFallback}
+            </h2>
+            <span className={themeConfig.textMuted}>/</span>
+            <p className={`text-xs max-w-md truncate ${themeConfig.textSecondary}`}>
+              {activeProject?.description || t.workspaceHint}
+            </p>
+          </div>
+
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setLanguage((l) => (l === 'en' ? 'zh' : 'en'))}
+              className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+              title={t.switchLanguageHint}
+            >
+              <Globe className="w-3.5 h-3.5 text-cyan-500" />
+              <span>{language === 'en' ? 'English' : '简体中文'}</span>
+            </button>
+
+            <div className="relative z-50">
+              <button
+                onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-all flex items-center gap-1.5 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+                title={t.switchThemeHint}
+              >
+                <Palette className="w-3.5 h-3.5 text-purple-500" />
+                <span>{language === 'zh' ? themeConfig.nameZh : themeConfig.nameEn}</span>
+              </button>
+              {isThemeMenuOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setIsThemeMenuOpen(false)} />
+                  <div className={`absolute right-0 mt-2 w-48 border rounded-xl shadow-2xl p-2 z-50 flex flex-col gap-1 ${themeConfig.modalBg}`}>
+                    <div className={`text-[10px] font-bold uppercase px-2 py-1 tracking-wider ${themeConfig.textMuted}`}>
+                      {t.themeSelection}
+                    </div>
+                    {(Object.keys(THEME_CONFIGS) as ThemeStyle[]).map((key) => {
+                      const cfg = THEME_CONFIGS[key];
+                      const isSelected = key === themeStyle;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() => {
+                            setThemeStyle(key);
+                            setIsThemeMenuOpen(false);
+                          }}
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-medium flex items-center justify-between transition-colors ${
+                            isSelected
+                              ? 'bg-indigo-600 text-white font-bold shadow-sm'
+                              : `${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`
+                          }`}
+                        >
+                          <span>{language === 'zh' ? cfg.nameZh : cfg.nameEn}</span>
+                          {isSelected && <Check className="w-3.5 h-3.5 text-white" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+
+            <button
+              onClick={() => setIsCreateIssueModalOpen(true)}
+              disabled={!activeProject}
+              className="px-4 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-lg transition-all flex items-center gap-1.5 disabled:opacity-40"
+            >
+              <Plus className="w-4 h-4" />
+              {t.newIssue}
+            </button>
+          </div>
+        </header>
+
+        {activeProject ? (
+          <KanbanBoard
+            issues={activeIssues}
+            gitRepos={activeProject.gitRepos || []}
+            branchPrefixConfig={activeProject.branchPrefixConfig}
+            onSelectIssue={(issue) => setSelectedIssue(issue)}
+            onStartAutoDev={handleStartAutoDev}
+            onMoveColumn={handleMoveColumn}
+            onOpenCreateIssue={() => setIsCreateIssueModalOpen(true)}
+            lang={language}
+            themeStyle={themeStyle}
+          />
+        ) : (
+          <div className={`flex-1 flex flex-col items-center justify-center gap-3 ${themeConfig.textSecondary}`}>
+            <p className="text-sm">{t.createProjectToStart}</p>
+            <button
+              onClick={() => {
+                setEditingProject(null);
+                setIsProjectModalOpen(true);
+              }}
+              className="px-4 py-2 rounded-xl bg-indigo-600 text-white text-xs font-bold"
+            >
+              {t.newProject}
+            </button>
+          </div>
+        )}
+      </main>
+
+      {selectedIssue && (
+        <IssueDetailModal
+          isOpen={!!selectedIssue}
+          onClose={() => setSelectedIssue(null)}
+          issue={selectedIssue}
+          gitRepos={activeProject?.gitRepos || []}
+          modelConfig={effectiveModelConfig}
+          branchPrefixConfig={activeProject?.branchPrefixConfig}
+          onUpdateIssue={handleUpdateIssue}
+          onStartAutoDev={handleStartAutoDev}
+          onCancelAutoDev={handleCancelAutoDev}
+          onDeleteIssue={handleDeleteIssue}
+          projectId={activeProject?.id}
+          lang={language}
+          themeStyle={themeStyle}
+        />
+      )}
+
+      {isProjectModalOpen && (
+        <ProjectModal
+          isOpen={isProjectModalOpen}
+          onClose={() => {
+            setIsProjectModalOpen(false);
+            setEditingProject(null);
+          }}
+          onSave={handleSaveProject}
+          existingProject={editingProject}
+          themeStyle={themeStyle}
+          lang={language}
+        />
+      )}
+
+      {isCreateIssueModalOpen && activeProject && (
+        <CreateIssueModal
+          isOpen={isCreateIssueModalOpen}
+          onClose={() => setIsCreateIssueModalOpen(false)}
+          projectId={activeProject.id}
+          gitRepos={activeProject.gitRepos}
+          onCreate={handleCreateIssue}
+          lang={language}
+          themeStyle={themeStyle}
+        />
+      )}
+
+      {isGlobalSettingsOpen && (
+        <GlobalSettingsModal
+          isOpen={isGlobalSettingsOpen}
+          onClose={() => setIsGlobalSettingsOpen(false)}
+          config={globalModelConfig}
+          onSave={handleSaveGlobalConfig}
+          themeStyle={themeStyle}
+          lang={language}
+        />
+      )}
+    </div>
+  );
+}
