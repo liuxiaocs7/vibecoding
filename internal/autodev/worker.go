@@ -170,7 +170,7 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 	_ = r.Store.UpdateJob(job)
 
 	cfg, _ := r.Store.GetModelConfig()
-	if proj.UseCustomModelConfig && proj.CustomModelConfig != nil && proj.CustomModelConfig.OpenAIAPIKey != "" {
+	if proj.UseCustomModelConfig && proj.CustomModelConfig != nil && strings.TrimSpace(proj.CustomModelConfig.OpenAIAPIKey) != "" {
 		cfg = *proj.CustomModelConfig
 	}
 

@@ -2,7 +2,7 @@ import { ModelConfig, BranchPrefixConfig } from '../types';
 
 export const DEFAULT_GLOBAL_MODEL_CONFIG: ModelConfig = {
   useCustomOpenAI: true,
-  openAIBaseUrl: 'https://api.openai.com/v1',
+  openAIBaseUrl: 'https://api.openai.com/v1/chat/completions',
   openAIApiKey: '',
   openAIModel: 'gpt-4o',
   temperature: 0.7,

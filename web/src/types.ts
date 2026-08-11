@@ -15,7 +15,7 @@ export interface GitRepo {
 
 export interface ModelConfig {
   useCustomOpenAI: boolean;
-  openAIBaseUrl: string; // e.g. https://api.openai.com/v1
+  openAIBaseUrl: string; // full chat completions URL, e.g. https://api.openai.com/v1/chat/completions
   openAIApiKey: string;
   openAIModel: string; // e.g. gpt-4o, gpt-4o-mini, deepseek-chat, deepseek-r1
   temperature: number;

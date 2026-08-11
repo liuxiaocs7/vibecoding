@@ -71,6 +71,8 @@ export async function testOpenAPIConnection(config: {
   openAIBaseUrl: string;
   openAIApiKey: string;
   openAIModel: string;
+  /** When key is blank, server uses this project's stored custom key (if any). */
+  projectId?: string;
 }): Promise<{ success: boolean; message?: string; error?: string }> {
   try {
     const res = await fetch('/api/test-openapi', {

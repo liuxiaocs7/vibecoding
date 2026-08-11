@@ -123,6 +123,10 @@ func (s *Store) GetModelConfig() (model.ModelConfig, error) {
 	if !ok {
 		return model.DefaultModelConfig(), nil
 	}
+	if upgraded := upgradeModelConfigURLs(&cfg); upgraded {
+		// Persist migrated full endpoint so the UI shows the real path.
+		_ = s.PutSetting("global_model_config", cfg)
+	}
 	return cfg, nil
 }
 
@@ -132,7 +136,20 @@ func (s *Store) PutModelConfig(cfg model.ModelConfig) error {
 	if strings.TrimSpace(cfg.OpenAIAPIKey) == "" && existing.OpenAIAPIKey != "" {
 		cfg.OpenAIAPIKey = existing.OpenAIAPIKey
 	}
+	upgradeModelConfigURLs(&cfg)
 	return s.PutSetting("global_model_config", cfg)
+}
+
+func upgradeModelConfigURLs(cfg *model.ModelConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	next := model.UpgradeLegacyOpenAIBaseURL(cfg.OpenAIBaseURL)
+	if next == cfg.OpenAIBaseURL {
+		return false
+	}
+	cfg.OpenAIBaseURL = next
+	return true
 }
 
 func (s *Store) GetUIPrefs() (model.UIPrefs, error) {
@@ -167,6 +184,9 @@ func (s *Store) ListProjects() ([]model.Project, error) {
 		if err := json.Unmarshal([]byte(raw), &p); err != nil {
 			return nil, err
 		}
+		if p.CustomModelConfig != nil {
+			upgradeModelConfigURLs(p.CustomModelConfig)
+		}
 		out = append(out, p)
 	}
 	if out == nil {
@@ -188,6 +208,9 @@ func (s *Store) GetProject(id string) (*model.Project, error) {
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {
 		return nil, err
 	}
+	if p.CustomModelConfig != nil {
+		upgradeModelConfigURLs(p.CustomModelConfig)
+	}
 	return &p, nil
 }
 
@@ -203,6 +226,15 @@ func (s *Store) UpsertProject(p model.Project) error {
 	if p.GitRepos == nil {
 		p.GitRepos = []model.GitRepo{}
 	}
+
+	// Preserve project custom API key when the client sends a masked/blank value.
+	// Also drop response-only fields (keyConfigured/keyHint) so they are not persisted.
+	if existing, _ := s.GetProject(p.ID); existing != nil {
+		p.CustomModelConfig = mergeCustomModelConfig(existing.CustomModelConfig, p.CustomModelConfig)
+	} else {
+		p.CustomModelConfig = sanitizeModelConfigForStore(p.CustomModelConfig)
+	}
+
 	b, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -212,6 +244,29 @@ INSERT INTO projects(id, data, created_at, updated_at) VALUES(?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
 `, p.ID, string(b), p.CreatedAt, p.UpdatedAt)
 	return err
+}
+
+func mergeCustomModelConfig(existing, incoming *model.ModelConfig) *model.ModelConfig {
+	if incoming == nil {
+		// Client omitted custom config — keep whatever was stored.
+		return sanitizeModelConfigForStore(existing)
+	}
+	out := *incoming
+	if strings.TrimSpace(out.OpenAIAPIKey) == "" && existing != nil {
+		out.OpenAIAPIKey = existing.OpenAIAPIKey
+	}
+	return sanitizeModelConfigForStore(&out)
+}
+
+func sanitizeModelConfigForStore(cfg *model.ModelConfig) *model.ModelConfig {
+	if cfg == nil {
+		return nil
+	}
+	out := *cfg
+	out.KeyConfigured = false
+	out.KeyHint = ""
+	out.OpenAIBaseURL = model.UpgradeLegacyOpenAIBaseURL(out.OpenAIBaseURL)
+	return &out
 }
 
 func (s *Store) DeleteProject(id string) error {

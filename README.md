@@ -48,7 +48,7 @@ Logging uses [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-c
 
 ## Typical workflow
 
-1. Open **LLM settings** and save Base URL + API Key (stored only on the local server).
+1. Open **LLM settings** and save the full chat-completions URL + API Key (stored only on the local server).
 2. Create a **Project** and add a local git repository path (use **Validate path**).
 3. Create an **Issue** in Requirements, chat with the AI, then **Extract Dev Spec**.
 4. **Accept Spec → Backlog**, then **Start Auto-Dev**.

@@ -26,7 +26,9 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
   const isLight = themeConfig.isLight;
   const t = getTranslation(lang);
 
-  const [openAIBaseUrl, setOpenAIBaseUrl] = useState(config.openAIBaseUrl || 'https://api.openai.com/v1');
+  const [openAIBaseUrl, setOpenAIBaseUrl] = useState(
+    config.openAIBaseUrl || 'https://api.openai.com/v1/chat/completions'
+  );
   const [openAIApiKey, setOpenAIApiKey] = useState('');
   const [openAIModel, setOpenAIModel] = useState(config.openAIModel || 'gpt-4o');
   const [temperature, setTemperature] = useState(config.temperature ?? 0.7);
@@ -104,22 +106,28 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
               <span>OpenAPI 参数配置</span>
             </div>
 
-            {/* Base URL */}
+            {/* Full chat completions URL */}
             <div>
               <label className={`block text-xs font-medium mb-1.5 ${themeConfig.textPrimary}`}>
-                OpenAPI Base URL (接口基址)
+                {t.baseUrlLabel}
               </label>
               <div className="relative">
                 <input
                   type="text"
                   value={openAIBaseUrl}
                   onChange={(e) => setOpenAIBaseUrl(e.target.value)}
-                  placeholder="https://api.openai.com/v1 或 https://api.deepseek.com/v1"
+                  placeholder="https://api.openai.com/v1/chat/completions"
                   className={`w-full px-3.5 py-2.5 border rounded-xl focus:outline-none transition-colors font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
                 />
               </div>
               <p className={`text-[11px] mt-1 ${themeConfig.textMuted}`}>
-                例: OpenAI: <code className="font-semibold">https://api.openai.com/v1</code> | DeepSeek: <code className="font-semibold">https://api.deepseek.com/v1</code>
+                {t.baseUrlHint}
+                <br />
+                例: <code className="font-semibold">https://api.openai.com/v1/chat/completions</code>
+                {' | '}
+                <code className="font-semibold">https://api.deepseek.com/v1/chat/completions</code>
+                {' | '}
+                <code className="font-semibold">http://llm-gw.jd.local/v1/chat/completions</code>
               </p>
             </div>
 

@@ -283,7 +283,6 @@ func (s *Server) handleListProjects(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
-	// strip project custom keys
 	for i := range list {
 		if list[i].CustomModelConfig != nil {
 			pub := list[i].CustomModelConfig.Public()
@@ -311,7 +310,7 @@ func (s *Server) handleCreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	saved, _ := s.Store.GetProject(p.ID)
-	writeJSON(w, 201, saved)
+	writeJSON(w, 201, publicProject(saved))
 }
 
 func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
@@ -328,20 +327,24 @@ func (s *Server) handleUpdateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	p.ID = id
 	p.CreatedAt = existing.CreatedAt
-	// preserve custom key if blank
-	if p.CustomModelConfig != nil && p.CustomModelConfig.OpenAIAPIKey == "" && existing.CustomModelConfig != nil {
-		p.CustomModelConfig.OpenAIAPIKey = existing.CustomModelConfig.OpenAIAPIKey
-	}
 	if err := s.Store.UpsertProject(p); err != nil {
 		writeErr(w, 500, err.Error())
 		return
 	}
 	saved, _ := s.Store.GetProject(id)
-	if saved.CustomModelConfig != nil {
-		pub := saved.CustomModelConfig.Public()
-		saved.CustomModelConfig = &pub
+	writeJSON(w, 200, publicProject(saved))
+}
+
+func publicProject(p *model.Project) *model.Project {
+	if p == nil {
+		return nil
 	}
-	writeJSON(w, 200, saved)
+	out := *p
+	if out.CustomModelConfig != nil {
+		pub := out.CustomModelConfig.Public()
+		out.CustomModelConfig = &pub
+	}
+	return &out
 }
 
 func (s *Server) handleDeleteProject(w http.ResponseWriter, r *http.Request) {
@@ -474,7 +477,7 @@ func (s *Server) resolveModel(projectID string) (model.ModelConfig, error) {
 	if err != nil || p == nil {
 		return cfg, nil
 	}
-	if p.UseCustomModelConfig && p.CustomModelConfig != nil && p.CustomModelConfig.OpenAIAPIKey != "" {
+	if p.UseCustomModelConfig && p.CustomModelConfig != nil && strings.TrimSpace(p.CustomModelConfig.OpenAIAPIKey) != "" {
 		return *p.CustomModelConfig, nil
 	}
 	return cfg, nil
@@ -543,7 +546,8 @@ Prefer structured sections: Summary, Architecture, Target Files, Implementation 
 		msgs = append(msgs, llm.ChatMessage{Role: "user", Content: body.Prompt})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	// Allow rate-limit retries (up to 10) with backoff.
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
 	defer cancel()
 	chatReq := llm.ChatRequest{
 		ModelConfig: cfg,
@@ -672,7 +676,8 @@ Update the Dev Spec accordingly and return JSON with chatReply + rawMarkdown.`,
 	}
 	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
 
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	// Allow rate-limit retries (up to 10) with backoff.
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
 	defer cancel()
 	chatReqJSON := llm.ChatRequest{
 		ModelConfig: cfg,
@@ -783,25 +788,45 @@ func (s *Server) handleTestOpenAPI(w http.ResponseWriter, r *http.Request) {
 		OpenAIBaseURL string `json:"openAIBaseUrl"`
 		OpenAIAPIKey  string `json:"openAIApiKey"`
 		OpenAIModel   string `json:"openAIModel"`
+		ProjectID     string `json:"projectId"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeErr(w, 400, "invalid JSON")
 		return
 	}
-	key := body.OpenAIAPIKey
+	key := strings.TrimSpace(body.OpenAIAPIKey)
+	baseURL := strings.TrimSpace(body.OpenAIBaseURL)
+	modelName := strings.TrimSpace(body.OpenAIModel)
+	// Blank key: prefer project custom config when projectId is set, else global.
 	if key == "" {
-		cfg, _ := s.Store.GetModelConfig()
-		key = cfg.OpenAIAPIKey
-		if body.OpenAIBaseURL == "" {
-			body.OpenAIBaseURL = cfg.OpenAIBaseURL
+		if body.ProjectID != "" {
+			if p, _ := s.Store.GetProject(body.ProjectID); p != nil &&
+				p.UseCustomModelConfig && p.CustomModelConfig != nil &&
+				strings.TrimSpace(p.CustomModelConfig.OpenAIAPIKey) != "" {
+				key = p.CustomModelConfig.OpenAIAPIKey
+				if baseURL == "" {
+					baseURL = p.CustomModelConfig.OpenAIBaseURL
+				}
+				if modelName == "" {
+					modelName = p.CustomModelConfig.OpenAIModel
+				}
+			}
 		}
-		if body.OpenAIModel == "" {
-			body.OpenAIModel = cfg.OpenAIModel
+		if key == "" {
+			cfg, _ := s.Store.GetModelConfig()
+			key = cfg.OpenAIAPIKey
+			if baseURL == "" {
+				baseURL = cfg.OpenAIBaseURL
+			}
+			if modelName == "" {
+				modelName = cfg.OpenAIModel
+			}
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	// Connectivity test shares OpenAPI retries (10) for 429 rate limits.
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
 	defer cancel()
-	reply, err := s.LLM.TestOpenAPI(ctx, body.OpenAIBaseURL, key, body.OpenAIModel)
+	reply, err := s.LLM.TestOpenAPI(ctx, baseURL, key, modelName)
 	if err != nil {
 		writeJSON(w, 400, map[string]any{"success": false, "error": err.Error()})
 		return

@@ -4,7 +4,24 @@ import { DEFAULT_GLOBAL_MODEL_CONFIG, DEFAULT_BRANCH_PREFIX_CONFIG } from '../da
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { api } from '../lib/api';
-import { X, FolderPlus, GitBranch, Trash2, Plus, Globe, Settings2, Code, FileCode, GitFork, Sparkles, CheckCircle2, Loader2 } from 'lucide-react';
+import { testOpenAPIConnection } from '../lib/llm';
+import {
+  X,
+  FolderPlus,
+  GitBranch,
+  Trash2,
+  Plus,
+  Globe,
+  Settings2,
+  Code,
+  FileCode,
+  GitFork,
+  Sparkles,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  Sliders,
+} from 'lucide-react';
 
 interface ProjectModalProps {
   isOpen: boolean;
@@ -40,11 +57,44 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   const [useCustomModelConfig, setUseCustomModelConfig] = useState(
     existingProject?.useCustomModelConfig || false
   );
-  const [customModelConfig, setCustomModelConfig] = useState<ModelConfig>(
-    existingProject?.customModelConfig || DEFAULT_GLOBAL_MODEL_CONFIG
+  const [customModelConfig, setCustomModelConfig] = useState<ModelConfig>(() => {
+    const base = existingProject?.customModelConfig || DEFAULT_GLOBAL_MODEL_CONFIG;
+    // Never put the server secret into the controlled input; blank means "keep existing".
+    return { ...base, openAIApiKey: '' };
+  });
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const keyAlreadyConfigured = !!(
+    existingProject?.customModelConfig?.keyConfigured ||
+    existingProject?.customModelConfig?.openAIApiKey
   );
+  const [testingLLM, setTestingLLM] = useState(false);
+  const [llmTestResult, setLlmTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
   const [activeTab, setActiveTab] = useState<'basic' | 'repos' | 'branches' | 'llm'>('basic');
+
+  const handleTestProjectLLM = async () => {
+    setTestingLLM(true);
+    setLlmTestResult(null);
+    const res = await testOpenAPIConnection({
+      openAIBaseUrl: customModelConfig.openAIBaseUrl.trim(),
+      openAIApiKey: apiKeyDraft.trim(),
+      openAIModel: customModelConfig.openAIModel.trim(),
+      // Blank key → server uses this project's stored custom key.
+      projectId: existingProject?.id,
+    });
+    setTestingLLM(false);
+    if (res.success) {
+      setLlmTestResult({
+        success: true,
+        message: t.testOpenAPIOk.replace('{message}', res.message || ''),
+      });
+    } else {
+      setLlmTestResult({
+        success: false,
+        message: t.testOpenAPIFail.replace('{error}', res.error || ''),
+      });
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -148,7 +198,11 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       gitRepos,
       branchPrefixConfig,
       useCustomModelConfig,
-      customModelConfig,
+      customModelConfig: {
+        ...customModelConfig,
+        // Empty draft keeps the server-side key (same as global LLM settings).
+        openAIApiKey: apiKeyDraft.trim(),
+      },
       createdAt: existingProject?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
@@ -569,20 +623,37 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                       onChange={(e) =>
                         setCustomModelConfig({ ...customModelConfig, openAIBaseUrl: e.target.value })
                       }
+                      placeholder="http://llm-gw.jd.local/v1/chat/completions"
                       className={`w-full px-3 py-2 border rounded-lg text-xs font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
                     />
+                    <p className={`text-[11px] mt-1 ${themeConfig.textMuted}`}>{t.baseUrlHint}</p>
                   </div>
 
                   <div>
                     <label className={`block text-xs font-medium mb-1 ${themeConfig.textPrimary}`}>{t.apiKeyLabel}</label>
                     <input
                       type="password"
-                      value={customModelConfig.openAIApiKey}
-                      onChange={(e) =>
-                        setCustomModelConfig({ ...customModelConfig, openAIApiKey: e.target.value })
+                      value={apiKeyDraft}
+                      onChange={(e) => setApiKeyDraft(e.target.value)}
+                      placeholder={
+                        keyAlreadyConfigured
+                          ? t.keyConfiguredKeep.replace(
+                              '{hint}',
+                              existingProject?.customModelConfig?.keyHint || '****'
+                            )
+                          : t.keyPlaceholderServer
                       }
                       className={`w-full px-3 py-2 border rounded-lg text-xs font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      autoComplete="new-password"
                     />
+                    {keyAlreadyConfigured && (
+                      <p className="text-[11px] mt-1 text-emerald-600 dark:text-emerald-300">
+                        {t.keyStoredHint.replace(
+                          '{hint}',
+                          existingProject?.customModelConfig?.keyHint || '****'
+                        )}
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -595,6 +666,47 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                       }
                       className={`w-full px-3 py-2 border rounded-lg text-xs font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
                     />
+                  </div>
+
+                  <div className="pt-1">
+                    <button
+                      type="button"
+                      onClick={handleTestProjectLLM}
+                      disabled={
+                        testingLLM ||
+                        !customModelConfig.openAIBaseUrl.trim() ||
+                        (!apiKeyDraft.trim() && !keyAlreadyConfigured)
+                      }
+                      className="px-4 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 rounded-xl text-xs font-semibold text-indigo-800 dark:text-indigo-200 flex items-center gap-2 transition-colors disabled:opacity-50"
+                    >
+                      {testingLLM ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                          {t.testOpenAPIRunning}
+                        </>
+                      ) : (
+                        <>
+                          <Sliders className="w-3.5 h-3.5 text-indigo-500" />
+                          {t.testOpenAPI}
+                        </>
+                      )}
+                    </button>
+                    {llmTestResult && (
+                      <div
+                        className={`mt-3 p-3 rounded-xl border text-xs flex items-start gap-2 ${
+                          llmTestResult.success
+                            ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-800 dark:text-emerald-200'
+                            : 'bg-rose-500/20 border-rose-500/30 text-rose-800 dark:text-rose-200'
+                        }`}
+                      >
+                        {llmTestResult.success ? (
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-rose-500 shrink-0 mt-0.5" />
+                        )}
+                        <div className="break-all select-text">{llmTestResult.message}</div>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

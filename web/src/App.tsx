@@ -25,7 +25,7 @@ import {
 
 const DEFAULT_MODEL: ModelConfig = {
   useCustomOpenAI: true,
-  openAIBaseUrl: 'https://api.openai.com/v1',
+  openAIBaseUrl: 'https://api.openai.com/v1/chat/completions',
   openAIApiKey: '',
   openAIModel: 'gpt-4o',
   temperature: 0.7,
@@ -148,6 +148,16 @@ export default function App() {
     activeProject?.useCustomModelConfig && activeProject?.customModelConfig
       ? activeProject.customModelConfig
       : globalModelConfig;
+
+  // Sidebar status: project custom key OR global key (API responses mask secrets via keyConfigured).
+  const effectiveLlmReady = !!(
+    (activeProject?.useCustomModelConfig &&
+      (activeProject.customModelConfig?.keyConfigured ||
+        activeProject.customModelConfig?.openAIApiKey)) ||
+    globalModelConfig.keyConfigured ||
+    globalModelConfig.openAIApiKey ||
+    llmReady
+  );
 
   const patchIssueLocal = useCallback((updated: Issue) => {
     setIssues((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
@@ -488,24 +498,24 @@ export default function App() {
         <div className={`p-4 border-t ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
           <div
             className={`rounded-xl p-3 flex items-center space-x-2.5 border ${
-              llmReady
+              effectiveLlmReady
                 ? 'bg-emerald-500/10 border-emerald-500/30'
                 : 'bg-amber-500/10 border-amber-500/30'
             }`}
           >
-            <div className={`w-2 h-2 rounded-full shrink-0 ${llmReady ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
+            <div className={`w-2 h-2 rounded-full shrink-0 ${effectiveLlmReady ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             <div className="overflow-hidden">
               <div
                 className={`text-[10px] font-mono font-semibold truncate uppercase ${
-                  llmReady ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
+                  effectiveLlmReady ? 'text-emerald-600 dark:text-emerald-300' : 'text-amber-700 dark:text-amber-300'
                 }`}
               >
-                {llmReady
+                {effectiveLlmReady
                   ? `${t.openaiPrefix}: ${effectiveModelConfig.openAIModel || t.customModel}`
                   : t.llmNotConfigured}
               </div>
               <div className={`text-[9px] truncate ${themeConfig.textMuted}`}>
-                {llmReady
+                {effectiveLlmReady
                   ? effectiveModelConfig.keyHint || effectiveModelConfig.openAIBaseUrl || t.llmReady
                   : t.openSettingsAddKey}
               </div>

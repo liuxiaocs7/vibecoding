@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 type Priority string
 
@@ -66,11 +69,31 @@ func DefaultBranchPrefix() BranchPrefixConfig {
 func DefaultModelConfig() ModelConfig {
 	return ModelConfig{
 		UseCustomOpenAI: true,
-		OpenAIBaseURL:   "https://api.openai.com/v1",
+		OpenAIBaseURL:   "https://api.openai.com/v1/chat/completions",
 		OpenAIAPIKey:    "",
 		OpenAIModel:     "gpt-4o",
 		Temperature:     0.7,
 	}
+}
+
+// NormalizeOpenAIBaseURL trims the configured chat-completions URL.
+// The value is used as-is for HTTP calls (no path is appended in the client).
+func NormalizeOpenAIBaseURL(raw string) string {
+	return strings.TrimRight(strings.TrimSpace(raw), "/")
+}
+
+// UpgradeLegacyOpenAIBaseURL migrates old API-root values (e.g. ".../v1") to the
+// full chat completions path so existing installs keep working after the UI
+// started requiring a complete endpoint URL.
+func UpgradeLegacyOpenAIBaseURL(raw string) string {
+	u := NormalizeOpenAIBaseURL(raw)
+	if u == "" {
+		return u
+	}
+	if strings.Contains(strings.ToLower(u), "/chat/completions") {
+		return u
+	}
+	return u + "/chat/completions"
 }
 
 type Project struct {

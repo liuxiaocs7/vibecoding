@@ -59,14 +59,18 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, onDelta func(s
 	default:
 		err = fmt.Errorf("no LLM configured: set OpenAPI Base URL + API Key in settings, or GEMINI_API_KEY")
 	}
-	entry := logger.L().WithFields(logger.Fields{
+	fields := logger.Fields{
 		"provider":    provider,
 		"model":       modelName,
 		"json_mode":   req.JSONMode,
 		"stream":      true,
 		"msg_count":   len(req.Messages),
 		"duration_ms": time.Since(start).Milliseconds(),
-	})
+	}
+	if provider == "openai" {
+		fields["url"] = completionsURL(cfg.OpenAIBaseURL)
+	}
+	entry := logger.L().WithFields(fields)
 	if err != nil {
 		entry.WithError(err).Warn("llm chat stream failed")
 		return "", err
@@ -79,6 +83,7 @@ func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func
 	if err := ValidateBaseURL(req.ModelConfig.OpenAIBaseURL); err != nil {
 		return "", err
 	}
+	endpoint, modelName := openAIEndpoint(req.ModelConfig)
 	msgs := make([]ChatMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, ChatMessage{Role: "system", Content: req.System})
@@ -90,7 +95,7 @@ func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func
 		temp = req.ModelConfig.Temperature
 	}
 	body := map[string]any{
-		"model":    firstNonEmpty(req.ModelConfig.OpenAIModel, "gpt-4o"),
+		"model":    modelName,
 		"messages": msgs,
 		"stream":   true,
 	}
@@ -103,7 +108,7 @@ func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func
 
 	doStream := func(payload map[string]any) (string, int, string, error) {
 		b, _ := json.Marshal(payload)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, completionsURL(req.ModelConfig.OpenAIBaseURL), bytes.NewReader(b))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 		if err != nil {
 			return "", 0, "", err
 		}
@@ -119,42 +124,73 @@ func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func
 
 		if resp.StatusCode >= 300 {
 			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-			return "", resp.StatusCode, string(raw), fmt.Errorf("OpenAPI stream failed [%d]: %s", resp.StatusCode, truncate(string(raw), 300))
+			return "", resp.StatusCode, string(raw), formatOpenAPIErr(endpoint, modelName, resp.StatusCode, truncate(string(raw), 300))
 		}
 
 		// Some proxies return JSON error with 200 — detect non-SSE briefly.
 		ct := strings.ToLower(resp.Header.Get("Content-Type"))
 		if strings.Contains(ct, "application/json") && !strings.Contains(ct, "event-stream") {
 			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-			return "", resp.StatusCode, string(raw), fmt.Errorf("OpenAPI stream returned JSON instead of SSE: %s", truncate(string(raw), 300))
+			return "", resp.StatusCode, string(raw), formatOpenAPIErr(endpoint, modelName, resp.StatusCode, "non-SSE JSON: "+truncate(string(raw), 300))
 		}
 
 		full, err := readOpenAISSE(resp.Body, onDelta)
 		return full, resp.StatusCode, "", err
 	}
 
-	full, status, errBody, err := doStream(body)
-	if err != nil {
-		// Retry once without temperature for joybuilder-like models.
-		if status >= 300 && !req.OmitTemperature && strings.Contains(strings.ToLower(errBody), "temperature") {
-			retryBody := map[string]any{
-				"model":    body["model"],
-				"messages": body["messages"],
-				"stream":   true,
+	payload := body
+	tempStripped := req.OmitTemperature
+	var (
+		full    string
+		status  int
+		errBody string
+		err     error
+	)
+	for attempt := 1; attempt <= openAIMaxAttempts; attempt++ {
+		full, status, errBody, err = doStream(payload)
+		if err != nil {
+			// Temperature reject: strip and retry immediately (does not consume backoff budget alone).
+			if status >= 300 && !tempStripped && strings.Contains(strings.ToLower(errBody), "temperature") {
+				retryBody := map[string]any{
+					"model":    body["model"],
+					"messages": body["messages"],
+					"stream":   true,
+				}
+				if req.JSONMode {
+					retryBody["response_format"] = body["response_format"]
+				}
+				payload = retryBody
+				tempStripped = true
+				logRetry(endpoint, modelName, attempt, status, 0, "strip temperature and retry")
+				continue
 			}
-			if req.JSONMode {
-				retryBody["response_format"] = body["response_format"]
+			retryable := (status >= 300 && isRetryableHTTPStatus(status)) ||
+				(status == 0 && isRetryableNetErr(err))
+			// Do not retry after SSE bytes were already delivered.
+			if retryable && full == "" && attempt < openAIMaxAttempts {
+				wait := retryBackoff(attempt, status)
+				logRetry(endpoint, modelName, attempt, status, wait, err.Error())
+				if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
+					return "", formatOpenAPIErr(endpoint, modelName, status, sleepErr.Error())
+				}
+				continue
 			}
-			full, status, errBody, err = doStream(retryBody)
+			if !strings.Contains(err.Error(), "url=") {
+				return "", formatOpenAPIErr(endpoint, modelName, status, err.Error())
+			}
+			return "", err
 		}
+		break
 	}
 	if err != nil {
+		if !strings.Contains(err.Error(), "url=") {
+			return "", formatOpenAPIErr(endpoint, modelName, status, err.Error())
+		}
 		return "", err
 	}
 	if strings.TrimSpace(full) == "" {
-		return "", fmt.Errorf("no response generated")
+		return "", formatOpenAPIErr(endpoint, modelName, 0, "no response generated")
 	}
-	_ = status
 	_ = errBody
 	return full, nil
 }

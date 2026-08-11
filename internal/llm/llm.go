@@ -59,13 +59,17 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (string, error) {
 	default:
 		err = fmt.Errorf("no LLM configured: set OpenAPI Base URL + API Key in settings, or GEMINI_API_KEY")
 	}
-	entry := logger.L().WithFields(logger.Fields{
+	fields := logger.Fields{
 		"provider":    provider,
 		"model":       modelName,
 		"json_mode":   req.JSONMode,
 		"msg_count":   len(req.Messages),
 		"duration_ms": time.Since(start).Milliseconds(),
-	})
+	}
+	if provider == "openai" {
+		fields["url"] = completionsURL(cfg.OpenAIBaseURL)
+	}
+	entry := logger.L().WithFields(fields)
 	if err != nil {
 		entry.WithError(err).Warn("llm chat failed")
 		return "", err
@@ -97,18 +101,29 @@ func ValidateBaseURL(raw string) error {
 	return nil
 }
 
+// completionsURL returns the configured chat-completions endpoint as-is (trimmed).
+// Callers must store the full path in settings; nothing is appended here.
 func completionsURL(base string) string {
-	base = strings.TrimRight(base, "/")
-	if strings.HasSuffix(base, "/chat/completions") {
-		return base
+	return model.NormalizeOpenAIBaseURL(base)
+}
+
+func openAIEndpoint(cfg model.ModelConfig) (url, modelName string) {
+	return completionsURL(cfg.OpenAIBaseURL), firstNonEmpty(cfg.OpenAIModel, "gpt-4o")
+}
+
+// formatOpenAPIErr includes the request URL and model so failures are diagnosable in UI/logs.
+func formatOpenAPIErr(url, modelName string, status int, detail string) error {
+	if status > 0 {
+		return fmt.Errorf("OpenAPI request failed [%d] url=%s model=%s: %s", status, url, modelName, detail)
 	}
-	return base + "/chat/completions"
+	return fmt.Errorf("OpenAPI request failed url=%s model=%s: %s", url, modelName, detail)
 }
 
 func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error) {
 	if err := ValidateBaseURL(req.ModelConfig.OpenAIBaseURL); err != nil {
 		return "", err
 	}
+	endpoint, modelName := openAIEndpoint(req.ModelConfig)
 	msgs := make([]ChatMessage, 0, len(req.Messages)+1)
 	if req.System != "" {
 		msgs = append(msgs, ChatMessage{Role: "system", Content: req.System})
@@ -120,7 +135,7 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 		temp = req.ModelConfig.Temperature
 	}
 	body := map[string]any{
-		"model":    firstNonEmpty(req.ModelConfig.OpenAIModel, "gpt-4o"),
+		"model":    modelName,
 		"messages": msgs,
 	}
 	if !req.OmitTemperature {
@@ -132,7 +147,7 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 
 	doReq := func(payload map[string]any) ([]byte, int, error) {
 		b, _ := json.Marshal(payload)
-		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, completionsURL(req.ModelConfig.OpenAIBaseURL), bytes.NewReader(b))
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(b))
 		if err != nil {
 			return nil, 0, err
 		}
@@ -147,26 +162,55 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 		return raw, resp.StatusCode, nil
 	}
 
-	raw, status, err := doReq(body)
-	if err != nil {
-		return "", err
-	}
-	// Retry once without temperature for models that only accept the default.
-	if status >= 300 && !req.OmitTemperature && strings.Contains(strings.ToLower(string(raw)), "temperature") {
-		retryBody := map[string]any{
-			"model":    body["model"],
-			"messages": body["messages"],
-		}
-		if req.JSONMode {
-			retryBody["response_format"] = body["response_format"]
-		}
-		raw, status, err = doReq(retryBody)
+	payload := body
+	tempStripped := req.OmitTemperature
+	var (
+		raw    []byte
+		status int
+		err    error
+	)
+	for attempt := 1; attempt <= openAIMaxAttempts; attempt++ {
+		raw, status, err = doReq(payload)
 		if err != nil {
-			return "", err
+			if attempt < openAIMaxAttempts && isRetryableNetErr(err) {
+				wait := retryBackoff(attempt, 0)
+				logRetry(endpoint, modelName, attempt, 0, wait, err.Error())
+				if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
+					return "", formatOpenAPIErr(endpoint, modelName, 0, sleepErr.Error())
+				}
+				continue
+			}
+			return "", formatOpenAPIErr(endpoint, modelName, 0, err.Error())
 		}
+		// One-shot: strip temperature for models that only accept the default.
+		if status >= 300 && !tempStripped && strings.Contains(strings.ToLower(string(raw)), "temperature") {
+			retryBody := map[string]any{
+				"model":    body["model"],
+				"messages": body["messages"],
+			}
+			if req.JSONMode {
+				retryBody["response_format"] = body["response_format"]
+			}
+			payload = retryBody
+			tempStripped = true
+			logRetry(endpoint, modelName, attempt, status, 0, "strip temperature and retry")
+			continue
+		}
+		if status >= 300 && isRetryableHTTPStatus(status) && attempt < openAIMaxAttempts {
+			wait := retryBackoff(attempt, status)
+			logRetry(endpoint, modelName, attempt, status, wait, truncate(string(raw), 160))
+			if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
+				return "", formatOpenAPIErr(endpoint, modelName, status, sleepErr.Error())
+			}
+			continue
+		}
+		break
+	}
+	if err != nil {
+		return "", formatOpenAPIErr(endpoint, modelName, 0, err.Error())
 	}
 	if status >= 300 {
-		return "", fmt.Errorf("OpenAPI request failed [%d]: %s", status, truncate(string(raw), 300))
+		return "", formatOpenAPIErr(endpoint, modelName, status, truncate(string(raw), 300))
 	}
 	var parsed struct {
 		Choices []struct {
@@ -176,10 +220,10 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("parse response: %w", err)
+		return "", formatOpenAPIErr(endpoint, modelName, 0, fmt.Sprintf("parse response: %v", err))
 	}
 	if len(parsed.Choices) == 0 {
-		return "", fmt.Errorf("no response generated")
+		return "", formatOpenAPIErr(endpoint, modelName, 0, "no response generated")
 	}
 	return parsed.Choices[0].Message.Content, nil
 }
