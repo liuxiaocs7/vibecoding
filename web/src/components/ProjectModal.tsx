@@ -166,17 +166,20 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
       const prev = gitRepos[idx];
       const nextDir = dirNameFromPath(resolved);
       const updated = [...gitRepos];
+      const branch = res.defaultBranch || res.currentBranch || prev.defaultBranch || 'main';
       updated[idx] = {
         ...prev,
         path: resolved,
         name: isAutoRepoName(prev.name, prev.path) && nextDir ? nextDir : prev.name || nextDir,
-        defaultBranch: res.currentBranch || prev.defaultBranch || 'main',
+        defaultBranch: branch,
         filesCount: res.filesCount || 0,
       };
       setGitRepos(updated);
-      setRepoMsg(
-        `${t.validatedRepo}: ${res.path} (${res.filesCount || 0} ${t.filesLabel}, ${t.branchLabel} ${res.currentBranch})`
-      );
+      let msg = `${t.validatedRepo}: ${res.path} (${res.filesCount || 0} ${t.filesLabel}, ${t.branchLabel} ${branch})`;
+      if (res.hasCommits === false || res.warning) {
+        msg += ` — ${lang === 'zh' ? '仓库还没有提交，启动自动开发时会自动创建初始 commit' : res.warning || 'no commits yet; Auto-Dev will initialize'}`;
+      }
+      setRepoMsg(msg);
     } catch (err: any) {
       setRepoMsg(err.message || t.validationFailed);
     } finally {

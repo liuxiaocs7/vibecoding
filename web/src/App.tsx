@@ -316,10 +316,24 @@ export default function App() {
   };
 
   const handleCancelAutoDev = async (issueId: string) => {
-    const jobId = autoDevJobs.current.get(issueId);
-    if (!jobId) return;
     try {
-      await api.cancelAutoDev(jobId);
+      // Prefer issue-scoped cancel so it still works after refresh / lost job id.
+      const res = await api.cancelAutoDevByIssue(issueId);
+      autoDevJobs.current.delete(issueId);
+      unsubscribers.current.get(issueId)?.();
+      unsubscribers.current.delete(issueId);
+      if (res.issue) {
+        patchIssueLocal(res.issue);
+      } else {
+        const cur = issues.find((i) => i.id === issueId);
+        if (cur) {
+          patchIssueLocal({
+            ...cur,
+            status: 'backlog',
+            updatedAt: new Date().toISOString(),
+          });
+        }
+      }
       showToast('info', t.autoDevCancelRequested);
     } catch (err: any) {
       showToast('error', err.message);

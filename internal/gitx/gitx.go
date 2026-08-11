@@ -37,13 +37,120 @@ func ValidateRepo(path string) (map[string]any, error) {
 	branch = strings.TrimSpace(branch)
 	dirty, _ := IsDirty(abs)
 	count := countFiles(abs)
-	return map[string]any{
+	hasCommits := HasCommits(abs)
+	defaultBranch := branch
+	if hasCommits {
+		if b, err := ResolveBaseBranch(abs, branch); err == nil {
+			defaultBranch = b
+		}
+	}
+	out := map[string]any{
 		"ok":            true,
 		"path":          abs,
 		"currentBranch": branch,
+		"defaultBranch": defaultBranch,
 		"dirty":         dirty,
 		"filesCount":    count,
-	}, nil
+		"hasCommits":    hasCommits,
+	}
+	if !hasCommits {
+		out["warning"] = "repository has no commits yet; Auto-Dev will create an initial commit automatically"
+	}
+	return out, nil
+}
+
+// HasCommits reports whether HEAD resolves to a commit.
+func HasCommits(dir string) bool {
+	_, err := run(dir, "rev-parse", "--verify", "HEAD")
+	return err == nil
+}
+
+// EnsureInitialCommit makes an empty repo usable as an Auto-Dev base.
+// When there are no commits yet, it points HEAD at preferred (or main) and
+// creates an empty initial commit. Returns the base branch and whether init ran.
+func EnsureInitialCommit(dir, preferred string) (base string, initialized bool, err error) {
+	if HasCommits(dir) {
+		base, err = ResolveBaseBranch(dir, preferred)
+		return base, false, err
+	}
+	branch := strings.TrimSpace(preferred)
+	if branch == "" || branch == "HEAD" {
+		if out, e := run(dir, "symbolic-ref", "--short", "HEAD"); e == nil {
+			branch = strings.TrimSpace(out)
+		}
+	}
+	if branch == "" || branch == "HEAD" {
+		branch = "main"
+	}
+	if _, err := run(dir, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+		return "", false, fmt.Errorf("set default branch %q: %w", branch, err)
+	}
+	cmd := exec.Command(
+		"git",
+		"-c", "user.name=VibeBot",
+		"-c", "user.email=vibebot@local",
+		"commit", "--allow-empty",
+		"-m", "chore: initial commit (auto-created by Vibecoding)",
+	)
+	cmd.Dir = dir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", false, fmt.Errorf("git initial commit: %s", msg)
+	}
+	return branch, true, nil
+}
+
+func branchExists(dir, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "HEAD" {
+		return false
+	}
+	_, err := run(dir, "show-ref", "--verify", "--quiet", "refs/heads/"+name)
+	return err == nil
+}
+
+// ResolveBaseBranch picks a real local base branch for Auto-Dev / merge.
+// preferred is the project-configured defaultBranch when set.
+func ResolveBaseBranch(dir, preferred string) (string, error) {
+	if !HasCommits(dir) {
+		return "", fmt.Errorf("repository has no commits yet; create an initial commit on the default branch before Auto-Dev")
+	}
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" && branchExists(dir, preferred) {
+		return preferred, nil
+	}
+	if cur, err := CurrentBranch(dir); err == nil && branchExists(dir, cur) {
+		return cur, nil
+	}
+	if out, err := run(dir, "symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"); err == nil {
+		ref := strings.TrimSpace(out) // refs/remotes/origin/main
+		if i := strings.LastIndex(ref, "/"); i >= 0 {
+			name := ref[i+1:]
+			if branchExists(dir, name) {
+				return name, nil
+			}
+		}
+	}
+	for _, name := range []string{"main", "master", "develop", "trunk"} {
+		if branchExists(dir, name) {
+			return name, nil
+		}
+	}
+	out, err := run(dir, "for-each-ref", "--format=%(refname:short)", "--count=1", "refs/heads/")
+	if err == nil {
+		if name := strings.TrimSpace(out); name != "" {
+			return name, nil
+		}
+	}
+	if preferred != "" {
+		return "", fmt.Errorf("configured default branch %q does not exist locally (and no fallback branch found)", preferred)
+	}
+	return "", fmt.Errorf("no local branch found to use as Auto-Dev base")
 }
 
 func countFiles(root string) int {
@@ -92,29 +199,32 @@ func IsDirty(dir string) (bool, error) {
 	return strings.TrimSpace(out) != "", nil
 }
 
+// hasTrackedChanges reports staged/unstaged changes to tracked files (ignores untracked).
+func hasTrackedChanges(dir string) (bool, error) {
+	out, err := run(dir, "status", "--porcelain", "--untracked-files=no")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
 func CheckoutBranch(dir, defaultBranch, newBranch string) error {
-	dirty, err := IsDirty(dir)
+	// Ignore untracked files so empty repos with local files can still branch.
+	dirty, err := hasTrackedChanges(dir)
 	if err != nil {
 		return err
 	}
 	if dirty {
 		return fmt.Errorf("working tree is dirty in %s; commit or stash changes first", dir)
 	}
-	if defaultBranch == "" {
-		defaultBranch = "main"
+	base, _, err := EnsureInitialCommit(dir, defaultBranch)
+	if err != nil {
+		return err
 	}
-	// Ensure we are on default branch tip.
-	if _, err := run(dir, "checkout", defaultBranch); err != nil {
-		// try master
-		if defaultBranch == "main" {
-			if _, err2 := run(dir, "checkout", "master"); err2 != nil {
-				return err
-			}
-		} else {
-			return err
-		}
+	// Ensure we are on base branch tip.
+	if _, err := run(dir, "checkout", base); err != nil {
+		return fmt.Errorf("checkout base branch %q: %w", base, err)
 	}
-	// Delete local branch if exists from previous failed run? Prefer create new unique.
 	if _, err := run(dir, "checkout", "-b", newBranch); err != nil {
 		// maybe exists — checkout existing
 		if _, err2 := run(dir, "checkout", newBranch); err2 != nil {
@@ -203,8 +313,10 @@ func CommitAll(dir, message string) error {
 }
 
 func DiffStats(dir, baseBranch string) (model.DiffStats, error) {
-	if baseBranch == "" {
-		baseBranch = "main"
+	if base, err := ResolveBaseBranch(dir, baseBranch); err == nil {
+		baseBranch = base
+	} else if strings.TrimSpace(baseBranch) == "" {
+		baseBranch = "HEAD~1"
 	}
 	out, err := run(dir, "diff", "--numstat", baseBranch+"...HEAD")
 	if err != nil {
@@ -240,11 +352,12 @@ func MergeBranch(dir, defaultBranch, featureBranch string) error {
 	if dirty {
 		return fmt.Errorf("working tree is dirty; cannot merge")
 	}
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-	if _, err := run(dir, "checkout", defaultBranch); err != nil {
+	base, err := ResolveBaseBranch(dir, defaultBranch)
+	if err != nil {
 		return err
+	}
+	if _, err := run(dir, "checkout", base); err != nil {
+		return fmt.Errorf("checkout base branch %q: %w", base, err)
 	}
 	if _, err := run(dir, "merge", "--no-ff", "-m", "Merge "+featureBranch+" via Vibecoding", featureBranch); err != nil {
 		return err

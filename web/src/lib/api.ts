@@ -83,10 +83,16 @@ export const api = {
     request<Issue>(`/api/issues/${id}/approve-merge`, { method: 'POST', body: '{}' }),
 
   validateRepo: (path: string) =>
-    request<{ ok: boolean; path?: string; currentBranch?: string; filesCount?: number; error?: string }>(
-      '/api/repos/validate',
-      { method: 'POST', body: JSON.stringify({ path }) }
-    ),
+    request<{
+      ok: boolean;
+      path?: string;
+      currentBranch?: string;
+      defaultBranch?: string;
+      filesCount?: number;
+      hasCommits?: boolean;
+      warning?: string;
+      error?: string;
+    }>('/api/repos/validate', { method: 'POST', body: JSON.stringify({ path }) }),
 
   generateSpec: (issueId: string, body: { prompt?: string; messages?: unknown[] }) =>
     request<{ spec: DevSpec; text: string; chatReply?: string; process?: string }>(
@@ -149,7 +155,17 @@ export const api = {
     }),
 
   cancelAutoDev: (jobId: string) =>
-    request<{ ok: boolean }>(`/api/auto-dev/jobs/${jobId}/cancel`, { method: 'POST', body: '{}' }),
+    request<{ ok: boolean; issue?: Issue }>(`/api/auto-dev/jobs/${jobId}/cancel`, {
+      method: 'POST',
+      body: '{}',
+    }),
+
+  /** Cancel by issue id — works after refresh / when in-memory job id is lost. */
+  cancelAutoDevByIssue: (issueId: string) =>
+    request<{ ok: boolean; issue: Issue }>(`/api/issues/${issueId}/cancel-auto-dev`, {
+      method: 'POST',
+      body: '{}',
+    }),
 
   getJob: (jobId: string) =>
     request<{ job: AutoDevJob; logs: AutoDevLog[] }>(`/api/auto-dev/jobs/${jobId}`),

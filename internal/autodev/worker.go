@@ -3,6 +3,7 @@ package autodev
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -103,22 +104,46 @@ func (r *Runner) Start(jobID string) {
 		}()
 		if err := r.run(ctx, jobID); err != nil {
 			job, _ := r.Store.GetJob(jobID)
-			if job != nil && job.Status != model.JobCancelled {
-				job.Status = model.JobFailed
-				job.Error = err.Error()
-				job.Phase = "failed"
-				_ = r.Store.UpdateJob(job)
-				_ = r.appendLog(job, "failed", err.Error(), "")
-				r.Hub.Publish(jobID, model.JobEvent{Type: "error", Phase: "failed", Error: err.Error(), Status: string(model.JobFailed)})
-				logger.L().WithFields(logger.Fields{
-					"job_id":   jobID,
-					"issue_id": job.IssueID,
-				}).WithError(err).Error("autodev failed")
-			} else if err == context.Canceled {
-				logger.L().WithField("job_id", jobID).Info("autodev cancelled")
+			if job == nil {
+				return
 			}
+			if errors.Is(err, context.Canceled) || job.Status == model.JobCancelled {
+				job.Status = model.JobCancelled
+				job.Error = "cancelled"
+				job.Phase = "cancelled"
+				_ = r.Store.UpdateJob(job)
+				_ = r.resetIssueToBacklog(job.IssueID)
+				r.Hub.Publish(jobID, model.JobEvent{Type: "status", Status: string(model.JobCancelled), Message: "cancelled"})
+				logger.L().WithField("job_id", jobID).Info("autodev cancelled")
+				return
+			}
+			job.Status = model.JobFailed
+			job.Error = err.Error()
+			job.Phase = "failed"
+			_ = r.Store.UpdateJob(job)
+			_ = r.appendLog(job, "failed", err.Error(), "")
+			_ = r.resetIssueToBacklog(job.IssueID)
+			r.Hub.Publish(jobID, model.JobEvent{Type: "error", Phase: "failed", Error: err.Error(), Status: string(model.JobFailed)})
+			logger.L().WithFields(logger.Fields{
+				"job_id":   jobID,
+				"issue_id": job.IssueID,
+			}).WithError(err).Error("autodev failed")
 		}
 	}()
+}
+
+// resetIssueToBacklog moves a stuck in_progress issue back after fail/cancel.
+func (r *Runner) resetIssueToBacklog(issueID string) error {
+	issue, err := r.Store.GetIssue(issueID)
+	if err != nil || issue == nil {
+		return err
+	}
+	if issue.Status != model.StatusInProgress {
+		return nil
+	}
+	issue.Status = model.StatusBacklog
+	issue.UpdatedAt = model.NowISO()
+	return r.Store.UpsertIssue(*issue)
 }
 
 func (r *Runner) run(ctx context.Context, jobID string) error {
@@ -126,6 +151,10 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 	if err != nil || job == nil {
 		return fmt.Errorf("job not found")
 	}
+	job.Status = model.JobRunning
+	job.Phase = "analyzing"
+	_ = r.Store.UpdateJob(job)
+
 	issue, err := r.Store.GetIssue(job.IssueID)
 	if err != nil || issue == nil {
 		return fmt.Errorf("issue not found")
@@ -188,8 +217,10 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 		if ctx.Err() != nil {
 			job.Status = model.JobCancelled
 			job.Error = "cancelled"
+			job.Phase = "cancelled"
 			_ = r.Store.UpdateJob(job)
-			r.Hub.Publish(jobID, model.JobEvent{Type: "status", Status: string(model.JobCancelled)})
+			_ = r.resetIssueToBacklog(issue.ID)
+			r.Hub.Publish(jobID, model.JobEvent{Type: "status", Status: string(model.JobCancelled), Message: "cancelled"})
 			return context.Canceled
 		}
 		job.Progress = p
@@ -222,10 +253,17 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 		return err
 	}
 	for _, repo := range repos {
-		if err := gitx.CheckoutBranch(repo.Path, repo.DefaultBranch, branchName); err != nil {
+		base, inited, err := gitx.EnsureInitialCommit(repo.Path, repo.DefaultBranch)
+		if err != nil {
 			return fmt.Errorf("branch %s: %w", repo.Name, err)
 		}
-		_ = r.appendLog(job, "branching", fmt.Sprintf("[%s] checked out %s", repo.Name, branchName), "")
+		if inited {
+			_ = r.appendLog(job, "branching", fmt.Sprintf("[%s] empty repo — created initial commit on %s", repo.Name, base), "")
+		}
+		if err := gitx.CheckoutBranch(repo.Path, base, branchName); err != nil {
+			return fmt.Errorf("branch %s: %w", repo.Name, err)
+		}
+		_ = r.appendLog(job, "branching", fmt.Sprintf("[%s] base=%s → checked out %s", repo.Name, base, branchName), "")
 	}
 
 	if err := progress(40, "coding", "Generating and applying code changes via LLM..."); err != nil {

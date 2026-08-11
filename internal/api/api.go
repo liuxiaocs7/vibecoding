@@ -59,6 +59,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auto-dev/jobs/{id}", s.handleGetJob)
 	mux.HandleFunc("GET /api/auto-dev/jobs/{id}/events", s.handleJobEvents)
 	mux.HandleFunc("POST /api/auto-dev/jobs/{id}/cancel", s.handleCancelJob)
+	mux.HandleFunc("POST /api/issues/{id}/cancel-auto-dev", s.handleCancelAutoDevByIssue)
 
 	if s.Static != nil {
 		fileServer := http.FileServer(http.FS(s.Static))
@@ -956,11 +957,57 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ok := s.Hub.Cancel(id)
-	job.Status = model.JobCancelled
-	job.Error = "cancelled by user"
-	_ = s.Store.UpdateJob(job)
+	if job.Status == model.JobQueued || job.Status == model.JobRunning {
+		job.Status = model.JobCancelled
+		job.Error = "cancelled by user"
+		job.Phase = "cancelled"
+		_ = s.Store.UpdateJob(job)
+	}
+	issue := s.resetIssueAutoDev(job.IssueID)
 	s.Hub.Publish(id, model.JobEvent{Type: "status", Status: string(model.JobCancelled), Message: "cancelled"})
-	writeJSON(w, 200, map[string]any{"ok": ok, "job": job})
+	writeJSON(w, 200, map[string]any{"ok": ok || issue != nil, "job": job, "issue": issue})
+}
+
+// handleCancelAutoDevByIssue cancels any active job and unsticks in_progress issues
+// even after refresh (when the browser lost the in-memory job id).
+func (s *Server) handleCancelAutoDevByIssue(w http.ResponseWriter, r *http.Request) {
+	issueID := r.PathValue("id")
+	issue, err := s.Store.GetIssue(issueID)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	var job *model.AutoDevJob
+	if active, _ := s.Store.ActiveJobForRepoIssue(issueID); active != nil {
+		job = active
+		_ = s.Hub.Cancel(active.ID)
+		active.Status = model.JobCancelled
+		active.Error = "cancelled by user"
+		active.Phase = "cancelled"
+		_ = s.Store.UpdateJob(active)
+		s.Hub.Publish(active.ID, model.JobEvent{Type: "status", Status: string(model.JobCancelled), Message: "cancelled"})
+	}
+	issue = s.resetIssueAutoDev(issueID)
+	if issue == nil {
+		writeErr(w, 500, "failed to update issue")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "job": job, "issue": issue})
+}
+
+func (s *Server) resetIssueAutoDev(issueID string) *model.Issue {
+	issue, err := s.Store.GetIssue(issueID)
+	if err != nil || issue == nil {
+		return nil
+	}
+	if issue.Status == model.StatusInProgress {
+		issue.Status = model.StatusBacklog
+		issue.UpdatedAt = model.NowISO()
+		if err := s.Store.UpsertIssue(*issue); err != nil {
+			return nil
+		}
+	}
+	return issue
 }
 
 func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
