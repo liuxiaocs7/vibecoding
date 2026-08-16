@@ -2,12 +2,58 @@
 
 Single-binary, local-first AI Auto-Dev board. Manage projects and issues on a Kanban, generate Dev Specs with an LLM, then let VibeBot create a git branch, patch code, run tests, and commit for review.
 
+Two run modes:
+
+| Mode | What it is | When to use |
+|------|------------|-------------|
+| **Desktop** | Wails v2 window + OS WebView (no system browser required) | Local GUI on macOS / Windows / Linux |
+| **Server** | HTTP only (`127.0.0.1:8090`), optional `--open` | Docker, CI, headless hosts |
+
 ## Requirements
 
-- Go 1.22+
-- Node.js 18+ (to build the web UI)
+### Common
+
+- Go 1.21+ (macOS 15+ needs **Go 1.23.3+**; this repo uses Go 1.25.x)
+- Node.js 15+ (18+ recommended) to build the web UI
 - `git` on PATH
 - An OpenAI-compatible API key (or `GEMINI_API_KEY`)
+
+### Desktop (Wails v2)
+
+Install the Wails CLI and verify the toolchain:
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@latest
+# ensure $(go env GOPATH)/bin is on PATH
+wails doctor
+```
+
+Platform notes (see [Wails installation](https://wails.io/docs/gettingstarted/installation)):
+
+| OS | Develop | Run |
+|----|---------|-----|
+| **macOS** | Xcode Command Line Tools (`xcode-select --install`) | System **WKWebView** (built-in) |
+| **Windows** 10/11 | Go + Node; WebView2 present (check with `wails doctor`) | [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (usually preinstalled) |
+| **Linux** | `gcc` + GTK3 + WebKit2GTK **dev** packages (`wails doctor` prints distro commands) | GTK3 + WebKit2GTK **runtime** (see below) |
+
+Supported platforms: Windows 10/11 AMD64/ARM64; macOS 10.15+ AMD64 (dev), 11.0+ ARM64; Linux AMD64/ARM64.
+
+**Linux runtime examples** (end users need runtime libs, not `-dev`):
+
+| Distro | Install |
+|--------|---------|
+| Debian 12 / Ubuntu 22.04+ | `apt install libgtk-3-0 libwebkit2gtk-4.1-0` |
+| Debian 11 / Ubuntu 20.04 | `apt install libgtk-3-0 libwebkit2gtk-4.0-37` |
+| Fedora 40+ | `dnf install gtk3 webkit2gtk4.1` |
+| Arch / Manjaro | `pacman -S gtk3 webkit2gtk-4.1` |
+
+Desktop Linux builds default to **WebKit2GTK ABI 4.1** (`webkit2_41`). Older distros (ABI 4.0) should use **Server** mode or build with `-tags webkit2_40`. See [Linux distro support](https://wails.io/docs/guides/linux-distro-support/).
+
+Optional: [UPX](https://upx.github.io/) (compress), [NSIS](https://wails.io/docs/guides/windows-installer/) (Windows installer).
+
+### Server / Docker
+
+No WebView. Build with `-tags server` and `CGO_ENABLED=0`. A modern browser is only needed if you use `--open` or open the URL yourself.
 
 ## Quick start
 
@@ -39,7 +85,7 @@ Open http://localhost:3000
 |------|---------|-------------|
 | `--addr` | `127.0.0.1:8090` | Listen address |
 | `--data-dir` | `~/.vibecoding` | SQLite / config directory |
-| `--open` | false | Open browser after start |
+| `--open` | false | Open browser after start (server mode) |
 | `--log-level` | `info` | Log level: `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | Log format: `text` / `json` |
 | `--log-output` | `stdout` | `stdout` / `stderr` / `discard` / path to file |
