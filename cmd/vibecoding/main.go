@@ -10,12 +10,8 @@ import (
 	"time"
 
 	"github.com/ymhhh/go-common/logger"
-	"github.com/ymhhh/vibecoding/internal/api"
-	"github.com/ymhhh/vibecoding/internal/applog"
-	"github.com/ymhhh/vibecoding/internal/autodev"
+	"github.com/ymhhh/vibecoding/internal/appbootstrap"
 	"github.com/ymhhh/vibecoding/internal/config"
-	"github.com/ymhhh/vibecoding/internal/db"
-	"github.com/ymhhh/vibecoding/internal/llm"
 )
 
 //go:embed all:dist
@@ -24,41 +20,26 @@ var embeddedDist embed.FS
 func main() {
 	cfg, err := config.Parse()
 	if err != nil {
-		// Logger not ready yet.
 		os.Stderr.WriteString("config: " + err.Error() + "\n")
 		os.Exit(1)
 	}
-	if err := applog.Init(cfg.LogLevel, cfg.LogFormat, cfg.LogOutput); err != nil {
-		os.Stderr.WriteString("logger: " + err.Error() + "\n")
-		os.Exit(1)
-	}
-
-	store, err := db.Open(cfg.DBPath())
-	if err != nil {
-		logger.L().WithError(err).Fatal("open database")
-	}
-	defer store.Close()
-
-	hub := autodev.NewHub()
-	llmClient := llm.New()
-	runner := &autodev.Runner{Store: store, LLM: llmClient, Hub: hub}
 
 	static, err := fs.Sub(embeddedDist, "dist")
 	if err != nil {
-		logger.L().WithError(err).Fatal("embed frontend")
+		os.Stderr.WriteString("embed frontend: " + err.Error() + "\n")
+		os.Exit(1)
 	}
 
-	srv := &api.Server{
-		Store:  store,
-		LLM:    llmClient,
-		Runner: runner,
-		Hub:    hub,
-		Static: static,
+	app, err := appbootstrap.New(cfg, static)
+	if err != nil {
+		os.Stderr.WriteString(err.Error() + "\n")
+		os.Exit(1)
 	}
+	defer app.Close()
 
 	httpServer := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           srv.Handler(),
+		Handler:           app.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 
