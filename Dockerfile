@@ -15,7 +15,7 @@ RUN go mod download
 COPY . .
 COPY --from=web /src/web/dist ./web/dist
 RUN rm -rf cmd/vibecoding/dist && mkdir -p cmd/vibecoding/dist && cp -R web/dist/. cmd/vibecoding/dist/
-RUN CGO_ENABLED=0 go build -o /vibecoding ./cmd/vibecoding
+RUN CGO_ENABLED=0 go build -tags server -o /vibecoding ./cmd/vibecoding
 
 FROM alpine:3.20
 RUN apk add --no-cache git ca-certificates

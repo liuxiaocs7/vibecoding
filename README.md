@@ -64,12 +64,23 @@ A modern browser is only needed if you use `--open` or open the URL yourself.
 
 ## Quick start
 
+### Desktop (default)
+
 ```bash
-# Build frontend + Go binary
+# Build frontend + Wails desktop binary (needs CGO + OS WebView deps)
 make build
 
-# Run (listens on 127.0.0.1:8090, opens browser with --open)
+# Run native window
+./vibecoding
+# or: make run
+```
+
+### Server (HTTP)
+
+```bash
+make build-server
 ./vibecoding --open
+# or: make run-server
 ```
 
 Data is stored under `~/.vibecoding/` (SQLite + settings).
@@ -77,14 +88,19 @@ Data is stored under `~/.vibecoding/` (SQLite + settings).
 ### Development
 
 ```bash
-# Terminal 1 — Go API
+# Option A — Wails live reload (desktop)
+make doctor    # once
+make dev-desktop
+
+# Option B — Vite + HTTP server
+# Terminal 1 — Go API (server tag)
 make backend && ./vibecoding
 
 # Terminal 2 — Vite (proxies /api → :8090)
 make dev
 ```
 
-Open http://localhost:3000
+Open http://localhost:3000 when using Option B.
 
 ### Flags
 
@@ -112,11 +128,14 @@ Logging uses [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-c
 
 ```bash
 make release
-# → dist/release/vibecoding-darwin-arm64
-# → dist/release/vibecoding-darwin-amd64
-# → dist/release/vibecoding-linux-amd64
+# → dist/release/vibecoding-server-darwin-arm64
+# → dist/release/vibecoding-server-darwin-amd64
+# → dist/release/vibecoding-server-linux-amd64
+# → dist/release/vibecoding-server-windows-amd64.exe
+# → dist/release/vibecoding-desktop-<host-os>-<arch>  (built for the machine running make)
 ```
 
+Desktop packages should be produced on each target OS (or CI matrix). Linux desktop uses `-tags webkit2_41` by default.
 ## Docker
 
 Mount host repositories into the container so Auto-Dev can edit them:

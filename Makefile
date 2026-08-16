@@ -1,4 +1,4 @@
-.PHONY: all web sync-web build backend run dev doctor dev-desktop clean release
+.PHONY: all web sync-web build build-server backend run run-server dev doctor dev-desktop clean release
 
 BINARY := vibecoding
 
@@ -8,11 +8,11 @@ all: build
 doctor:
 	wails doctor
 
-# Desktop live reload via Wails (requires desktop entry; see wails.json).
+# Desktop live reload via Wails.
 dev-desktop:
 	wails dev
 
-# Build the React SPA into web/dist, then sync into cmd/vibecoding/dist for embed.
+# Build the React SPA into web/dist, then sync into cmd/vibecoding/dist for server embed.
 web:
 	cd web && npm install && npm run build
 	$(MAKE) sync-web
@@ -26,16 +26,24 @@ sync-web:
 		printf '%s\n' '<!doctype html><title>Vibecoding</title><p>Run make web</p>' > cmd/vibecoding/dist/index.html; \
 	fi
 
-# Build the single binary (frontend must be built first for embedding).
+# Desktop binary (Wails + CGO). Requires platform WebView deps; see README.
 build: web
-	go build -o $(BINARY) ./cmd/vibecoding
+	CGO_ENABLED=1 go build -tags desktop -o $(BINARY) .
 
-# Build backend only (uses whatever is currently in cmd/vibecoding/dist).
+# Headless HTTP server (no WebView). Safe for Docker / CI.
+build-server: web
+	CGO_ENABLED=0 go build -tags server -o $(BINARY) ./cmd/vibecoding
+
+# Rebuild server using whatever is already in cmd/vibecoding/dist.
 backend: sync-web
-	go build -o $(BINARY) ./cmd/vibecoding
+	CGO_ENABLED=0 go build -tags server -o $(BINARY) ./cmd/vibecoding
 
-# Run the server (rebuilds binary first).
+# Run desktop app (rebuilds first).
 run: build
+	./$(BINARY)
+
+# Run HTTP server and open the system browser.
+run-server: build-server
 	./$(BINARY) --open
 
 # Frontend Vite dev server proxied to a separately-run backend on :8090.
@@ -45,14 +53,21 @@ dev:
 clean:
 	rm -f $(BINARY)
 	rm -rf web/dist
+	rm -rf build/bin
 	rm -rf dist/release
 	printf '%s\n' '<!doctype html><title>Vibecoding</title><p>Run make web</p>' > cmd/vibecoding/dist/index.html
 
-# Cross-compile release artifacts.
+# Release artifacts. Desktop needs a native (or matching) OS; server is pure Go.
+# Linux desktop defaults to WebKit2GTK ABI 4.1 (webkit2_41).
 release: web
 	mkdir -p dist/release
-	GOOS=darwin GOARCH=arm64 go build -o dist/release/vibecoding-darwin-arm64 ./cmd/vibecoding
-	GOOS=darwin GOARCH=amd64 go build -o dist/release/vibecoding-darwin-amd64 ./cmd/vibecoding
-	GOOS=linux GOARCH=amd64 go build -o dist/release/vibecoding-linux-amd64 ./cmd/vibecoding
+	@echo "Building server binaries (cross-compile OK)..."
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -tags server -o dist/release/vibecoding-server-darwin-arm64 ./cmd/vibecoding
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -tags server -o dist/release/vibecoding-server-darwin-amd64 ./cmd/vibecoding
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags server -o dist/release/vibecoding-server-linux-amd64 ./cmd/vibecoding
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags server -o dist/release/vibecoding-server-windows-amd64.exe ./cmd/vibecoding
+	@echo "Building desktop binary for host ($(shell go env GOOS)/$(shell go env GOARCH))..."
+	CGO_ENABLED=1 go build -tags "desktop webkit2_41" -o dist/release/vibecoding-desktop-$(shell go env GOOS)-$(shell go env GOARCH) .
 	cp README.md dist/release/ 2>/dev/null || true
 	@echo "Release binaries in dist/release/"
+	@echo "Note: desktop cross-compile is not supported here; build desktop on each target OS/CI runner."
