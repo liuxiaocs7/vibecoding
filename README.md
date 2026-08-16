@@ -69,6 +69,7 @@ A modern browser is only needed if you use `--open` or open the URL yourself.
 ```bash
 # Build frontend + Wails desktop binary (needs CGO + OS WebView deps)
 make build
+# equivalent: CGO_ENABLED=1 go build -tags "desktop,production" -o vibecoding .
 
 # Run native window
 ./vibecoding
@@ -135,7 +136,7 @@ make release
 # → dist/release/vibecoding-desktop-<host-os>-<arch>  (built for the machine running make)
 ```
 
-Desktop packages should be produced on each target OS (or CI matrix). Linux desktop uses `-tags webkit2_41` by default.
+Desktop packages should be produced on each target OS (or CI matrix). Linux desktop uses `-tags webkit2_41` by default. Desktop Go builds must include Wails' `production` (or `dev`) tag, e.g. `-tags "desktop,production"`. On macOS, link with `-framework UniformTypeIdentifiers` (set automatically by `make build`).
 ## Docker
 
 Mount host repositories into the container so Auto-Dev can edit them:

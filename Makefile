@@ -2,6 +2,11 @@
 
 BINARY := vibecoding
 
+# Wails on modern macOS/Xcode needs UniformTypeIdentifiers at link time.
+ifeq ($(shell go env GOOS),darwin)
+export CGO_LDFLAGS += -framework UniformTypeIdentifiers
+endif
+
 all: build
 
 # Check Wails / OS WebView toolchain (requires wails CLI on PATH).
@@ -27,8 +32,9 @@ sync-web:
 	fi
 
 # Desktop binary (Wails + CGO). Requires platform WebView deps; see README.
+# Wails requires the `production` (or `dev`) tag in addition to our `desktop` entry tag.
 build: web
-	CGO_ENABLED=1 go build -tags desktop -o $(BINARY) .
+	CGO_ENABLED=1 go build -tags "desktop,production" -o $(BINARY) .
 
 # Headless HTTP server (no WebView). Safe for Docker / CI.
 build-server: web
@@ -67,7 +73,7 @@ release: web
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -tags server -o dist/release/vibecoding-server-linux-amd64 ./cmd/vibecoding
 	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -tags server -o dist/release/vibecoding-server-windows-amd64.exe ./cmd/vibecoding
 	@echo "Building desktop binary for host ($(shell go env GOOS)/$(shell go env GOARCH))..."
-	CGO_ENABLED=1 go build -tags "desktop webkit2_41" -o dist/release/vibecoding-desktop-$(shell go env GOOS)-$(shell go env GOARCH) .
+	CGO_ENABLED=1 go build -tags "desktop,production,webkit2_41" -o dist/release/vibecoding-desktop-$(shell go env GOOS)-$(shell go env GOARCH) .
 	cp README.md dist/release/ 2>/dev/null || true
 	@echo "Release binaries in dist/release/"
 	@echo "Note: desktop cross-compile is not supported here; build desktop on each target OS/CI runner."
