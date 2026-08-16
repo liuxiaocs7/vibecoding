@@ -53,7 +53,14 @@ Optional: [UPX](https://upx.github.io/) (compress), [NSIS](https://wails.io/docs
 
 ### Server / Docker
 
-No WebView. Build with `-tags server` and `CGO_ENABLED=0`. A modern browser is only needed if you use `--open` or open the URL yourself.
+No WebView. Build with `-tags server` and `CGO_ENABLED=0`:
+
+```bash
+go build -tags server -o vibecoding ./cmd/vibecoding
+# or: make build-server
+```
+
+A modern browser is only needed if you use `--open` or open the URL yourself.
 
 ## Quick start
 
