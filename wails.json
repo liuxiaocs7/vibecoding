@@ -1,0 +1,21 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "vibecoding",
+  "outputfilename": "vibecoding",
+  "frontend:dir": "web",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": {
+    "name": "Henry Huang",
+    "email": ""
+  },
+  "info": {
+    "companyName": "ymhhh",
+    "productName": "Vibecoding",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright 2026 Henry Huang",
+    "comments": "Local-first AI Auto-Dev board"
+  }
+}

@@ -1,8 +1,16 @@
-.PHONY: all web sync-web build backend run dev clean release
+.PHONY: all web sync-web build backend run dev doctor dev-desktop clean release
 
 BINARY := vibecoding
 
 all: build
+
+# Check Wails / OS WebView toolchain (requires wails CLI on PATH).
+doctor:
+	wails doctor
+
+# Desktop live reload via Wails (requires desktop entry; see wails.json).
+dev-desktop:
+	wails dev
 
 # Build the React SPA into web/dist, then sync into cmd/vibecoding/dist for embed.
 web:

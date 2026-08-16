@@ -5,6 +5,8 @@ import {defineConfig} from 'vite';
 
 export default defineConfig(() => {
   return {
+    // Relative base for Wails AssetServer and file://-style asset loading.
+    base: './',
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
