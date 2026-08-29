@@ -2,14 +2,12 @@ import React from 'react';
 import { Issue } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
-import { aggregatedFileChanges } from '../../lib/subreq';
 import { DiffReview } from '../DiffReview';
 import {
   GitPullRequest,
   RotateCcw,
   GitMerge,
   AlertTriangle,
-  FileCode,
 } from 'lucide-react';
 
 interface IssueReviewTabProps {
@@ -151,51 +149,6 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
           </div>
         </div>
       )}
-
-      {/* Diff View */}
-      <div>
-        <h4 className={`text-xs font-bold uppercase tracking-wider mb-3 flex items-center gap-2 ${themeConfig.textSecondary}`}>
-          <FileCode className="w-4 h-4 text-indigo-500" />
-          变更文件 Diff 详情对比 (File Code Diff)
-        </h4>
-
-        {aggregatedFileChanges(issue).length === 0 ? (
-          <div className={`p-8 text-center text-xs border rounded-xl ${themeConfig.subtleBorder} ${themeConfig.textMuted}`}>
-            暂无文件变更 Diff 数据
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {aggregatedFileChanges(issue).map((fc, idx) => (
-              <div key={idx} className={`border rounded-xl overflow-hidden shadow-md ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                <div className={`p-3 border-b flex items-center justify-between text-xs font-mono ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
-                  <span className="text-indigo-600 dark:text-indigo-300 font-bold">{fc.filePath}</span>
-                  <span className={`text-[11px] ${themeConfig.textMuted}`}>{fc.repoName}</span>
-                </div>
-
-                <div className={`grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x font-mono text-[11px] ${themeConfig.subtleBorder}`}>
-                  <div className="p-3 bg-rose-500/5">
-                    <div className="text-[10px] text-rose-600 dark:text-rose-400 uppercase font-sans font-bold mb-1">
-                      原始代码 (Original)
-                    </div>
-                    <pre className="text-rose-800 dark:text-rose-200/80 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                      {fc.originalCode || '// (新建文件，无历史版本)'}
-                    </pre>
-                  </div>
-
-                  <div className="p-3 bg-emerald-500/5">
-                    <div className="text-[10px] text-emerald-600 dark:text-emerald-400 uppercase font-sans font-bold mb-1">
-                      AI 修改/新生成的代码 (Modified / Added)
-                    </div>
-                    <pre className="text-emerald-800 dark:text-emerald-200/90 overflow-x-auto whitespace-pre-wrap leading-relaxed">
-                      {fc.modifiedCode || '// (已被删除)'}
-                    </pre>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 };
