@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/ymhhh/vibecoding/internal/api"
 	"github.com/ymhhh/vibecoding/internal/applog"
@@ -35,7 +37,12 @@ func New(cfg *config.Config, static fs.FS) (*App, error) {
 	}
 	hub := autodev.NewHub()
 	llmClient := llm.New()
-	runner := &autodev.Runner{Store: store, LLM: llmClient, Hub: hub}
+	wtRoot := filepath.Join(cfg.DataDir, "worktrees")
+	if err := os.MkdirAll(wtRoot, 0o755); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("worktree root: %w", err)
+	}
+	runner := &autodev.Runner{Store: store, LLM: llmClient, Hub: hub, WorktreeRoot: wtRoot}
 	srv := &api.Server{
 		Store:  store,
 		LLM:    llmClient,
