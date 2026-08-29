@@ -7,6 +7,7 @@ import { api } from '../lib/api';
 import { MarkdownView } from '../lib/markdown';
 import { aggregatedFileChanges, hasSubRequirements, specMarkdownForExport, specReadyForDev, visibleSpec } from '../lib/subreq';
 import { saveTextFile } from '../lib/savefile';
+import { DiffReview } from './DiffReview';
 import { SubRequirementBar } from './SubRequirementBar';
 import {
   X,
@@ -1278,7 +1279,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                             ? 'text-amber-300 bg-amber-500/20'
                             : log.phase === 'branching'
                             ? 'text-indigo-300 bg-indigo-500/20'
-                            : log.phase === 'coding'
+                            : log.phase === 'coding' || log.phase === 'agent'
                             ? 'text-purple-300 bg-purple-500/20'
                             : log.phase === 'testing'
                             ? 'text-cyan-300 bg-cyan-500/20'
@@ -1292,6 +1293,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                               analyzing: '分析中',
                               branching: '建分支',
                               coding: '编码中',
+                              agent: 'Agent',
                               testing: '测试中',
                               linting: '检查中',
                               committing: '提交中',
@@ -1367,65 +1369,8 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                 )}
               </div>
 
-              {/* Code Review & Quality Gate Summary Report */}
-              <div className="p-5 rounded-2xl border border-emerald-500/30 bg-emerald-500/10 backdrop-blur-md space-y-4 shadow-xl">
-                <div className="flex items-center justify-between border-b border-emerald-500/20 pb-3">
-                  <div className="flex items-center gap-2">
-                    <ShieldCheck className="w-5 h-5 text-emerald-500" />
-                    <h4 className="text-sm font-bold text-emerald-900 dark:text-emerald-200">
-                      代码自动化评审与质量门禁结果 (Code Quality & Review Report)
-                    </h4>
-                  </div>
-                  <span className="px-2.5 py-1 rounded-md bg-emerald-500/20 border border-emerald-500/30 text-emerald-700 dark:text-emerald-300 text-xs font-mono font-bold">
-                    {t.scorePassed}
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
-                  <div className={`p-3 rounded-xl border space-y-1 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                    <span className={`text-[10px] uppercase font-semibold ${themeConfig.textMuted}`}>单元测试套件</span>
-                    <div className="text-emerald-600 dark:text-emerald-400 font-bold font-mono text-sm flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" /> {t.unitTestPassed}
-                    </div>
-                    <p className={`text-[10px] ${themeConfig.textMuted}`}>所有测试用例已断言绿灯通过</p>
-                  </div>
-
-                  <div className={`p-3 rounded-xl border space-y-1 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                    <span className={`text-[10px] uppercase font-semibold ${themeConfig.textMuted}`}>静态 TypeScript 检查</span>
-                    <div className="text-emerald-600 dark:text-emerald-400 font-bold font-mono text-sm flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" /> {t.zeroTypeErrors}
-                    </div>
-                    <p className={`text-[10px] ${themeConfig.textMuted}`}>无任何隐式 any 或类型不匹配</p>
-                  </div>
-
-                  <div className={`p-3 rounded-xl border space-y-1 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                    <span className={`text-[10px] uppercase font-semibold ${themeConfig.textMuted}`}>ESLint 代码规范</span>
-                    <div className="text-emerald-600 dark:text-emerald-400 font-bold font-mono text-sm flex items-center gap-1">
-                      <CheckCircle2 className="w-4 h-4" /> {t.zeroWarnings}
-                    </div>
-                    <p className={`text-[10px] ${themeConfig.textMuted}`}>符合团队工程统一风格标准</p>
-                  </div>
-
-                  <div className={`p-3 rounded-xl border space-y-1 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                    <span className={`text-[10px] uppercase font-semibold ${themeConfig.textMuted}`}>修改行数与体积</span>
-                    <div className="text-indigo-600 dark:text-indigo-300 font-bold font-mono text-sm">
-                      +{issue.prInfo?.diffStats?.additions || 98} / -{issue.prInfo?.diffStats?.deletions || 14}
-                    </div>
-                    <p className={`text-[10px] ${themeConfig.textMuted}`}>轻量精简，无无用冗余依赖</p>
-                  </div>
-                </div>
-
-                {/* Reviewer Feedback / Comments */}
-                <div className={`p-3.5 rounded-xl border space-y-1.5 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
-                  <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5">
-                    <Sparkles className="w-3.5 h-3.5 text-emerald-500" />
-                    评审结论与点评意见 (Reviewer Comments):
-                  </div>
-                  <p className={`text-xs leading-relaxed font-sans ${themeConfig.textPrimary}`}>
-                    {issue.reviewFeedback || '代码设计严谨且包含完备的异常处理逻辑，经自动分析校验与单元测试断言完全符合工程规范，已审核通过并合并至主干。'}
-                  </p>
-                </div>
-              </div>
+              {/* Real diff review */}
+              <DiffReview issueId={issue.id} lang={lang} />
 
               {showReworkBox && (
                 <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-3">

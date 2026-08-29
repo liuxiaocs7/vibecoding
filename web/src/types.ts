@@ -94,6 +94,22 @@ export interface AutoDevLog {
   details?: string;
 }
 
+export interface QualityGate {
+  testsRan: boolean;
+  testsPassed: boolean;
+  testsOutput?: string;
+  lintRan: boolean;
+  lintPassed: boolean;
+  lintOutput?: string;
+  repairRounds: number;
+}
+
+export interface WorktreeRef {
+  repoId: string;
+  repoName: string;
+  path: string;
+}
+
 export interface PRInfo {
   id: string;
   branchName: string;
@@ -107,6 +123,69 @@ export interface PRInfo {
     deletions: number;
     filesChanged: number;
   };
+  worktrees?: WorktreeRef[];
+  baseBranch?: string;
+  quality?: QualityGate;
+  executor?: string;
+}
+
+export type ExecutorType = 'llm' | 'agent';
+export type ExecutorPreset = 'claude' | 'cursor' | 'codex' | 'custom';
+
+export interface ExecutorConfig {
+  type: ExecutorType;
+  preset?: ExecutorPreset | string;
+  command?: string;
+  args?: string[];
+  promptStdin?: boolean;
+  timeoutSec: number;
+  maxHeal: number;
+}
+
+export interface ExecutorProbe {
+  id: string;
+  name: string;
+  type: string;
+  preset?: string;
+  available: boolean;
+  binary?: string;
+  hint?: string;
+}
+
+export interface DiffFile {
+  path: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  patch?: string;
+  truncated?: boolean;
+}
+
+export interface DiffCommit {
+  sha: string;
+  subject: string;
+  date?: string;
+}
+
+export interface RepoDiff {
+  repoId: string;
+  repoName: string;
+  baseBranch: string;
+  stats: { additions: number; deletions: number; filesChanged: number };
+  ahead: number;
+  behind: number;
+  files: DiffFile[];
+  commits: DiffCommit[];
+  error?: string;
+}
+
+export interface IssueDiff {
+  issueId: string;
+  branchName: string;
+  baseBranch?: string;
+  executor?: string;
+  quality?: QualityGate;
+  repos: RepoDiff[];
 }
 
 export interface Issue {

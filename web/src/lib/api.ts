@@ -123,6 +123,21 @@ export const api = {
   putModel: (config: ModelConfig) =>
     request<ModelConfig>('/api/settings/model', { method: 'PUT', body: JSON.stringify(config) }),
 
+  getExecutor: () => request<import('../types').ExecutorConfig>('/api/settings/executor'),
+  putExecutor: (config: import('../types').ExecutorConfig) =>
+    request<import('../types').ExecutorConfig>('/api/settings/executor', {
+      method: 'PUT',
+      body: JSON.stringify(config),
+    }),
+  listExecutors: () =>
+    request<{ executors: import('../types').ExecutorProbe[]; current: string }>('/api/executors'),
+  getIssueDiff: (id: string) => request<import('../types').IssueDiff>(`/api/issues/${id}/diff`),
+  openEditor: (id: string, app: 'cursor' | 'vscode', repoId?: string) =>
+    request<{ ok: boolean; app: string; path: string }>(`/api/issues/${id}/open-editor`, {
+      method: 'POST',
+      body: JSON.stringify({ app, repoId }),
+    }),
+
   getUIPrefs: () => request<UIPrefs>('/api/ui-prefs'),
   putUIPrefs: (prefs: UIPrefs) =>
     request<UIPrefs>('/api/ui-prefs', { method: 'PUT', body: JSON.stringify(prefs) }),

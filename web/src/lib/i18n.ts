@@ -82,7 +82,7 @@ export const TRANSLATIONS = {
     viewLogsBtn: 'Live Terminal Logs',
 
     stageFocusReviewTitle: 'Stage Focus: Code PR Review & Quality Gate',
-    stageFocusReviewDesc: 'Unit tests and static analysis are 100% green. Inspect code diffs before merging.',
+    stageFocusReviewDesc: 'Inspect real diffs and quality-gate results before merging.',
     approveMergeBtn: 'Approve & Merge',
 
     stageFocusCompletedTitle: 'Stage Focus: Delivered & Archived',
@@ -100,6 +100,25 @@ export const TRANSLATIONS = {
     originalCode: 'Original Code',
     modifiedCode: 'AI Modified / Added',
     reworkPrompt: 'Describe required changes or bug fixes for the AI agent:',
+    diffLoading: 'Loading real diff…',
+    diffLoadFailed: 'Unable to load diff',
+    diffEmpty: 'No diff yet (branch matches base)',
+    diffFiles: 'files',
+    executorLabel: 'Executor',
+    openInCursor: 'Open in Cursor',
+    openInVSCode: 'Open in VS Code',
+    codingExecutorTitle: 'Coding Executor (Auto-Dev)',
+    codingExecutorHint:
+      'Default built-in LLM. Optionally use local Claude / Cursor / Codex CLI (runs only inside isolated worktrees).',
+    maxHealRounds: 'Max heal rounds',
+    executorSaved: 'Executor settings saved',
+    gateSkipped: 'Skipped',
+    gatePassed: 'Passed',
+    gateFailed: 'Failed',
+    gateTests: 'Tests',
+    gateLint: 'Lint',
+    gateRepairRounds: 'Repair rounds',
+    gateRealChanges: 'Real changes',
 
     // Common Buttons
     cancel: 'Cancel',
@@ -276,7 +295,7 @@ export const TRANSLATIONS = {
     viewLogsBtn: '实时 Shell Logs',
 
     stageFocusReviewTitle: '阶段侧重点: 代码 PR 审查与质量门禁',
-    stageFocusReviewDesc: '单元测试与静态分析 100% 绿灯，请仔细审核变动文件 Code Diff。',
+    stageFocusReviewDesc: '合并前请查看真实 diff 与质量门禁结果。',
     approveMergeBtn: '同意合并 (Approve & Merge)',
 
     stageFocusCompletedTitle: '阶段侧重点: 已完成交付与全额归档',
@@ -294,6 +313,24 @@ export const TRANSLATIONS = {
     originalCode: '原始代码 (Original)',
     modifiedCode: 'AI 修改/新生成的代码',
     reworkPrompt: '请输入给 AI Agent 的修改要求或 Bug 反馈:',
+    diffLoading: '加载真实 diff…',
+    diffLoadFailed: '无法加载 diff',
+    diffEmpty: '尚无 diff（分支与基线一致）',
+    diffFiles: '个文件',
+    executorLabel: '执行器',
+    openInCursor: '用 Cursor 打开',
+    openInVSCode: '用 VS Code 打开',
+    codingExecutorTitle: '编码执行器（Auto-Dev）',
+    codingExecutorHint: '默认内置 LLM。也可选用本机 Claude / Cursor / Codex CLI（仅在隔离 worktree 中运行）。',
+    maxHealRounds: '自愈轮次',
+    executorSaved: '执行器配置已保存',
+    gateSkipped: '已跳过',
+    gatePassed: '通过',
+    gateFailed: '失败',
+    gateTests: '单元测试',
+    gateLint: '静态检查',
+    gateRepairRounds: '自愈轮次',
+    gateRealChanges: '真实变更',
 
     // Common Buttons
     cancel: '取消',

@@ -1,8 +1,9 @@
-import React, { useState } from 'react';
-import { ModelConfig } from '../types';
+import React, { useEffect, useState } from 'react';
+import { ExecutorConfig, ExecutorProbe, ModelConfig } from '../types';
 import { testOpenAPIConnection } from '../lib/llm';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
+import { api } from '../lib/api';
 import { X, Sparkles, CheckCircle2, AlertCircle, Loader2, Key, Globe, Cpu, Sliders } from 'lucide-react';
 
 interface GlobalSettingsModalProps {
@@ -36,6 +37,38 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
 
+  const [execType, setExecType] = useState<'llm' | 'agent'>('llm');
+  const [execPreset, setExecPreset] = useState('claude');
+  const [maxHeal, setMaxHeal] = useState(2);
+  const [customCommand, setCustomCommand] = useState('');
+  const [customArgs, setCustomArgs] = useState('{prompt}');
+  const [promptStdin, setPromptStdin] = useState(false);
+  const [probes, setProbes] = useState<ExecutorProbe[]>([]);
+  const [execMsg, setExecMsg] = useState('');
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const [cfg, listed] = await Promise.all([api.getExecutor(), api.listExecutors()]);
+        if (cancelled) return;
+        setExecType((cfg.type as 'llm' | 'agent') || 'llm');
+        setExecPreset(cfg.preset || 'claude');
+        setMaxHeal(cfg.maxHeal ?? 2);
+        setCustomCommand(cfg.command || '');
+        setCustomArgs((cfg.args || ['{prompt}']).join(' '));
+        setPromptStdin(!!cfg.promptStdin);
+        setProbes(listed.executors || []);
+      } catch (e) {
+        if (!cancelled) setExecMsg(String(e));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   const handleTestConnection = async () => {
@@ -60,7 +93,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     onSave({
       useCustomOpenAI: true,
       openAIBaseUrl: openAIBaseUrl.trim(),
@@ -68,7 +101,28 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
       openAIModel: openAIModel.trim(),
       temperature,
     });
-    onClose();
+    const execBody: ExecutorConfig = {
+      type: execType,
+      preset: execType === 'agent' ? execPreset : undefined,
+      timeoutSec: 1800,
+      maxHeal,
+      command: execPreset === 'custom' ? customCommand.trim() : undefined,
+      args:
+        execPreset === 'custom'
+          ? customArgs
+              .trim()
+              .split(/\s+/)
+              .filter(Boolean)
+          : undefined,
+      promptStdin: execPreset === 'custom' ? promptStdin : undefined,
+    };
+    try {
+      await api.putExecutor(execBody);
+      setExecMsg(t.executorSaved);
+      onClose();
+    } catch (e) {
+      setExecMsg(String(e));
+    }
   };
 
   return (
@@ -228,6 +282,96 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Coding executor */}
+          <div className="space-y-4 p-5 rounded-xl border border-violet-500/30 bg-violet-500/10">
+            <div className="flex items-center gap-2 text-violet-800 dark:text-violet-300 font-medium pb-2 border-b border-violet-500/20">
+              <Cpu className="w-4 h-4 text-violet-500" />
+              <span>{t.codingExecutorTitle}</span>
+            </div>
+            <p className={`text-xs ${themeConfig.textSecondary}`}>{t.codingExecutorHint}</p>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="block text-xs space-y-1">
+                <span className={themeConfig.textPrimary}>{lang === 'zh' ? '类型' : 'Type'}</span>
+                <select
+                  value={execType}
+                  onChange={(e) => setExecType(e.target.value as 'llm' | 'agent')}
+                  className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                >
+                  <option value="llm">LLM (VibeBot)</option>
+                  <option value="agent">Agent CLI</option>
+                </select>
+              </label>
+              <label className="block text-xs space-y-1">
+                <span className={themeConfig.textPrimary}>{t.maxHealRounds}</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={5}
+                  value={maxHeal}
+                  onChange={(e) => setMaxHeal(Number(e.target.value))}
+                  className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                />
+              </label>
+            </div>
+            {execType === 'agent' && (
+              <div className="space-y-3">
+                <label className="block text-xs space-y-1">
+                  <span className={themeConfig.textPrimary}>Preset</span>
+                  <select
+                    value={execPreset}
+                    onChange={(e) => setExecPreset(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                  >
+                    {probes
+                      .filter((p) => p.type === 'agent')
+                      .map((p) => (
+                        <option key={p.id} value={p.preset || p.id} disabled={!p.available && p.id !== 'custom'}>
+                          {p.name}
+                          {!p.available && p.id !== 'custom' ? (lang === 'zh' ? '（未安装）' : ' (missing)') : ''}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                {execPreset === 'custom' && (
+                  <>
+                    <label className="block text-xs space-y-1">
+                      <span className={themeConfig.textPrimary}>Command</span>
+                      <input
+                        value={customCommand}
+                        onChange={(e) => setCustomCommand(e.target.value)}
+                        placeholder="my-agent"
+                        className={`w-full px-3 py-2 border rounded-xl font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      />
+                    </label>
+                    <label className="block text-xs space-y-1">
+                      <span className={themeConfig.textPrimary}>Args (space-separated, may include {'{prompt}'})</span>
+                      <input
+                        value={customArgs}
+                        onChange={(e) => setCustomArgs(e.target.value)}
+                        placeholder="--print {prompt}"
+                        className={`w-full px-3 py-2 border rounded-xl font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      />
+                    </label>
+                    <label className={`flex items-center gap-2 text-xs ${themeConfig.textPrimary}`}>
+                      <input type="checkbox" checked={promptStdin} onChange={(e) => setPromptStdin(e.target.checked)} />
+                      Prompt via stdin
+                    </label>
+                  </>
+                )}
+                <div className="text-[11px] space-y-1 text-slate-500">
+                  {probes
+                    .filter((p) => p.type === 'agent' && !p.available && p.hint)
+                    .map((p) => (
+                      <div key={p.id}>
+                        {p.name}: {p.hint}
+                      </div>
+                    ))}
+                </div>
+              </div>
+            )}
+            {execMsg && <div className="text-xs text-violet-700 dark:text-violet-300">{execMsg}</div>}
           </div>
         </div>
 
