@@ -34,6 +34,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/settings/model", s.handleGetModel)
 	mux.HandleFunc("PUT /api/settings/model", s.handlePutModel)
+	mux.HandleFunc("GET /api/settings/executor", s.handleGetExecutor)
+	mux.HandleFunc("PUT /api/settings/executor", s.handlePutExecutor)
+	mux.HandleFunc("GET /api/executors", s.handleListExecutors)
 	mux.HandleFunc("GET /api/ui-prefs", s.handleGetUIPrefs)
 	mux.HandleFunc("PUT /api/ui-prefs", s.handlePutUIPrefs)
 
@@ -48,6 +51,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/issues/{id}", s.handleUpdateIssue)
 	mux.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)
 	mux.HandleFunc("POST /api/issues/{id}/approve-merge", s.handleApproveMerge)
+	mux.HandleFunc("GET /api/issues/{id}/diff", s.handleIssueDiff)
+	mux.HandleFunc("POST /api/issues/{id}/open-editor", s.handleOpenEditor)
 
 	mux.HandleFunc("POST /api/repos/validate", s.handleValidateRepo)
 
@@ -858,23 +863,14 @@ func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	for _, repo := range repos {
-		if err := gitx.MergeBranch(repo.Path, repo.DefaultBranch, issue.PRInfo.BranchName); err != nil {
-			writeErr(w, 500, fmt.Sprintf("merge %s: %v", repo.Name, err))
-			return
+	if err := s.approveMergeSafe(issue, repos); err != nil {
+		// Dirty default branch / merge conflicts surface as 409-ish client errors.
+		msg := err.Error()
+		status := 500
+		if strings.Contains(msg, "uncommitted changes") {
+			status = 409
 		}
-	}
-	issue.Status = model.StatusCompleted
-	issue.PRInfo.Status = "merged"
-	issue.AutoDevLogs = append(issue.AutoDevLogs, model.AutoDevLog{
-		ID:        "log-" + uuid.NewString()[:8],
-		Timestamp: time.Now().Format("15:04:05"),
-		Phase:     "completed",
-		Message:   "Developer approved; merged into default branch.",
-	})
-	issue.UpdatedAt = model.NowISO()
-	if err := s.Store.UpsertIssue(*issue); err != nil {
-		writeErr(w, 500, err.Error())
+		writeErr(w, status, msg)
 		return
 	}
 	writeJSON(w, 200, issue)
