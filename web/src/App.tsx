@@ -22,7 +22,9 @@ import {
   Loader2,
   AlertCircle,
   X,
+  Maximize2,
 } from 'lucide-react';
+import { isDesktopApp, toggleDesktopMaximize } from './lib/desktop';
 
 const DEFAULT_MODEL: ModelConfig = {
   useCustomOpenAI: true,
@@ -604,6 +606,17 @@ export default function App() {
                 </>
               )}
             </div>
+
+            <button
+              type="button"
+              onClick={() => void toggleDesktopMaximize()}
+              className={`p-1.5 rounded-xl border transition-all ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText} ${
+                isDesktopApp() ? '' : 'hidden'
+              }`}
+              title={language === 'zh' ? '最大化 / 还原窗口' : 'Maximize / restore window'}
+            >
+              <Maximize2 className="w-3.5 h-3.5 text-indigo-500" />
+            </button>
 
             <button
               onClick={() => setIsCreateIssueModalOpen(true)}

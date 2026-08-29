@@ -75,3 +75,19 @@ func (a *App) SaveTextFile(defaultFilename, contents string) (string, error) {
 	}
 	return path, nil
 }
+
+// WindowToggleMaximise toggles the native desktop window maximize state.
+func (a *App) WindowToggleMaximise() {
+	if a == nil || a.ctx == nil {
+		return
+	}
+	runtime.WindowToggleMaximise(a.ctx)
+}
+
+// WindowIsMaximised reports whether the desktop window is currently maximised.
+func (a *App) WindowIsMaximised() bool {
+	if a == nil || a.ctx == nil {
+		return false
+	}
+	return runtime.WindowIsMaximised(a.ctx)
+}

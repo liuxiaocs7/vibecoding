@@ -7,14 +7,36 @@
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
   }
-  
+
   code, pre, .font-mono {
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+
+  /* Flatten native macOS/WebKit select & number chrome to match themed inputs. */
+  select.vc-control,
+  input.vc-control[type='number'] {
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    appearance: none;
+  }
+  select.vc-control {
+    background-image: none;
+  }
+  select.vc-control option {
+    background-color: #0f172a;
+    color: #f1f5f9;
+  }
+  input.vc-control[type='number']::-webkit-outer-spin-button,
+  input.vc-control[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input.vc-control[type='number'] {
+    -moz-appearance: textfield;
   }
 }
 
 @layer utilities {
-  /* Custom glassmorphism scrollbars */
   ::-webkit-scrollbar {
     width: 6px;
     height: 6px;

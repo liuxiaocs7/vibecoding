@@ -4,7 +4,20 @@ import { testOpenAPIConnection } from '../lib/llm';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { api } from '../lib/api';
-import { X, Sparkles, CheckCircle2, AlertCircle, Loader2, Key, Globe, Cpu, Sliders } from 'lucide-react';
+import {
+  X,
+  Sparkles,
+  CheckCircle2,
+  AlertCircle,
+  Loader2,
+  Key,
+  Globe,
+  Cpu,
+  Sliders,
+  ChevronDown,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
 
 interface GlobalSettingsModalProps {
   isOpen: boolean;
@@ -45,9 +58,15 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
   const [promptStdin, setPromptStdin] = useState(false);
   const [probes, setProbes] = useState<ExecutorProbe[]>([]);
   const [execMsg, setExecMsg] = useState('');
+  const [maximized, setMaximized] = useState(false);
+
+  const controlClass = `w-full px-3.5 py-2.5 border rounded-xl focus:outline-none transition-colors text-xs vc-control ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`;
 
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setMaximized(false);
+      return;
+    }
     let cancelled = false;
     (async () => {
       try {
@@ -70,6 +89,26 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
   }, [isOpen]);
 
   if (!isOpen) return null;
+
+  const SelectField: React.FC<{
+    value: string;
+    onChange: (v: string) => void;
+    children: React.ReactNode;
+    className?: string;
+  }> = ({ value, onChange, children, className }) => (
+    <div className={`relative ${className || ''}`}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className={`${controlClass} pr-9 cursor-pointer`}
+      >
+        {children}
+      </select>
+      <ChevronDown
+        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 opacity-60 ${themeConfig.textSecondary}`}
+      />
+    </div>
+  );
 
   const handleTestConnection = async () => {
     setTesting(true);
@@ -126,8 +165,14 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4">
-      <div className={`w-full max-w-2xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh] ${themeConfig.modalBg}`}>
+    <div className={`fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md ${maximized ? 'p-0' : 'p-4'}`}>
+      <div
+        className={`border shadow-2xl overflow-hidden flex flex-col ${themeConfig.modalBg} ${
+          maximized
+            ? 'w-full h-full max-w-none max-h-none rounded-none'
+            : 'w-full max-w-2xl max-h-[90vh] rounded-2xl'
+        }`}
+      >
         {/* Modal Header */}
         <div className={`p-6 border-b flex items-center justify-between ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
           <div className="flex items-center gap-3">
@@ -143,12 +188,23 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className={`p-2 rounded-lg transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setMaximized((v) => !v)}
+              title={maximized ? (lang === 'zh' ? '还原' : 'Restore') : lang === 'zh' ? '最大化' : 'Maximize'}
+              className={`p-2 rounded-lg transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
+            >
+              {maximized ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className={`p-2 rounded-lg transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Modal Body */}
@@ -294,14 +350,10 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="block text-xs space-y-1">
                 <span className={themeConfig.textPrimary}>{lang === 'zh' ? '类型' : 'Type'}</span>
-                <select
-                  value={execType}
-                  onChange={(e) => setExecType(e.target.value as 'llm' | 'agent')}
-                  className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
-                >
+                <SelectField value={execType} onChange={(v) => setExecType(v as 'llm' | 'agent')}>
                   <option value="llm">LLM (VibeBot)</option>
                   <option value="agent">Agent CLI</option>
-                </select>
+                </SelectField>
               </label>
               <label className="block text-xs space-y-1">
                 <span className={themeConfig.textPrimary}>{t.maxHealRounds}</span>
@@ -311,7 +363,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                   max={5}
                   value={maxHeal}
                   onChange={(e) => setMaxHeal(Number(e.target.value))}
-                  className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                  className={controlClass}
                 />
               </label>
             </div>
@@ -319,11 +371,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
               <div className="space-y-3">
                 <label className="block text-xs space-y-1">
                   <span className={themeConfig.textPrimary}>Preset</span>
-                  <select
-                    value={execPreset}
-                    onChange={(e) => setExecPreset(e.target.value)}
-                    className={`w-full px-3 py-2 border rounded-xl text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
-                  >
+                  <SelectField value={execPreset} onChange={setExecPreset}>
                     {probes
                       .filter((p) => p.type === 'agent')
                       .map((p) => (
@@ -332,7 +380,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                           {!p.available && p.id !== 'custom' ? (lang === 'zh' ? '（未安装）' : ' (missing)') : ''}
                         </option>
                       ))}
-                  </select>
+                  </SelectField>
                 </label>
                 {execPreset === 'custom' && (
                   <>
@@ -342,7 +390,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                         value={customCommand}
                         onChange={(e) => setCustomCommand(e.target.value)}
                         placeholder="my-agent"
-                        className={`w-full px-3 py-2 border rounded-xl font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                        className={`${controlClass} font-mono`}
                       />
                     </label>
                     <label className="block text-xs space-y-1">
@@ -351,7 +399,7 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                         value={customArgs}
                         onChange={(e) => setCustomArgs(e.target.value)}
                         placeholder="--print {prompt}"
-                        className={`w-full px-3 py-2 border rounded-xl font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                        className={`${controlClass} font-mono`}
                       />
                     </label>
                     <label className={`flex items-center gap-2 text-xs ${themeConfig.textPrimary}`}>

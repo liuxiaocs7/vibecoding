@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/ymhhh/go-common/logger"
 	"github.com/ymhhh/vibecoding/internal/appbootstrap"
 	"github.com/ymhhh/vibecoding/internal/config"
@@ -50,9 +51,13 @@ func main() {
 	}).Info("vibecoding desktop starting")
 
 	err = wails.Run(&options.App{
-		Title:  "Vibecoding",
-		Width:  1280,
-		Height: 800,
+		Title:            "Vibecoding",
+		Width:            1280,
+		Height:           800,
+		MinWidth:         960,
+		MinHeight:        640,
+		DisableResize:    false,
+		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: func(next http.Handler) http.Handler {
@@ -65,10 +70,15 @@ func main() {
 				})
 			},
 		},
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind:             []interface{}{app},
+		// Non-nil Mac options are required: a nil Mac block leaves the green
+		// traffic-light zoom button disabled (wailsapp/wails#5519).
+		Mac: &mac.Options{
+			DisableZoom: false,
+			TitleBar:    mac.TitleBarDefault(),
+		},
+		OnStartup:  app.startup,
+		OnShutdown: app.shutdown,
+		Bind:       []interface{}{app},
 	})
 	if err != nil {
 		os.Stderr.WriteString("wails: " + err.Error() + "\n")
