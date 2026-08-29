@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,195 @@ func writeFile(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func initRepo(t *testing.T, branch string) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", branch)
+	runGit(t, dir, "config", "user.email", "t@t")
+	runGit(t, dir, "config", "user.name", "t")
+	writeFile(t, filepath.Join(dir, "README.md"), "hi\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "init")
+	return dir
+}
+
+func TestAddWorktreeLeavesMainDirtyAndHEAD(t *testing.T) {
+	dir := initRepo(t, "main")
+	writeFile(t, filepath.Join(dir, "dirty.txt"), "dirty\n")
+	headBefore, err := HeadSHA(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	branchBefore, err := CurrentBranch(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(t.TempDir(), "wt1")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/issue-1"); err != nil {
+		t.Fatal(err)
+	}
+	headAfter, _ := HeadSHA(dir)
+	branchAfter, _ := CurrentBranch(dir)
+	if headAfter != headBefore || branchAfter != branchBefore {
+		t.Fatalf("main tree changed: head %s→%s branch %s→%s", headBefore, headAfter, branchBefore, branchAfter)
+	}
+	dirty, _ := IsDirty(dir)
+	if !dirty {
+		t.Fatal("expected main tree to stay dirty")
+	}
+	cur, err := CurrentBranch(wt)
+	if err != nil || cur != "ai-dev/issue-1" {
+		t.Fatalf("worktree branch=%q err=%v", cur, err)
+	}
+}
+
+func TestAddWorktreeParallelBranches(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt1 := filepath.Join(t.TempDir(), "a")
+	wt2 := filepath.Join(t.TempDir(), "b")
+	if err := AddWorktree(dir, wt1, "main", "ai-dev/one"); err != nil {
+		t.Fatal(err)
+	}
+	if err := AddWorktree(dir, wt2, "main", "ai-dev/two"); err != nil {
+		t.Fatal(err)
+	}
+	b1, _ := CurrentBranch(wt1)
+	b2, _ := CurrentBranch(wt2)
+	if b1 != "ai-dev/one" || b2 != "ai-dev/two" {
+		t.Fatalf("got %q and %q", b1, b2)
+	}
+}
+
+func TestAddWorktreeReuseSamePath(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "reuse")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/rework"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "f.txt"), "x\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "wip")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/rework"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "f.txt")); err != nil {
+		t.Fatal("expected reused worktree to keep files")
+	}
+}
+
+func TestRemoveWorktree(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "gone")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/gone"); err != nil {
+		t.Fatal(err)
+	}
+	if err := RemoveWorktree(dir, wt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(wt); !os.IsNotExist(err) {
+		t.Fatalf("worktree path still exists: %v", err)
+	}
+	out, err := run(dir, "worktree", "list", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, wt) {
+		t.Fatalf("worktree list still mentions path:\n%s", out)
+	}
+	// Missing path should be fine.
+	if err := RemoveWorktree(dir, wt); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMergeBranchAtCleanOnBase(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/feat"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "feat.txt"), "feat\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat")
+	// Main is on main and clean.
+	if err := MergeBranchAt(dir, "main", "ai-dev/feat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "feat.txt")); err != nil {
+		t.Fatal("expected merge result on main")
+	}
+}
+
+func TestMergeBranchAtDirtyOnBaseRefuses(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/feat2"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "feat.txt"), "feat\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat")
+	writeFile(t, filepath.Join(dir, "dirty.txt"), "x\n")
+	err := MergeBranchAt(dir, "main", "ai-dev/feat2")
+	if err == nil {
+		t.Fatal("expected refuse dirty base")
+	}
+}
+
+func TestMergeBranchAtFromOtherBranch(t *testing.T) {
+	dir := initRepo(t, "main")
+	runGit(t, dir, "checkout", "-b", "topic")
+	writeFile(t, filepath.Join(dir, "topic.txt"), "t\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "topic")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/feat3"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "feat.txt"), "feat\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat")
+	curBefore, _ := CurrentBranch(dir)
+	if curBefore != "topic" {
+		t.Fatalf("want topic, got %s", curBefore)
+	}
+	if err := MergeBranchAt(dir, "main", "ai-dev/feat3"); err != nil {
+		t.Fatal(err)
+	}
+	curAfter, _ := CurrentBranch(dir)
+	if curAfter != "topic" {
+		t.Fatalf("main tree branch changed to %s", curAfter)
+	}
+	// Verify main branch tip has the file via show.
+	out, err := run(dir, "show", "main:feat.txt")
+	if err != nil || strings.TrimSpace(out) != "feat" {
+		t.Fatalf("main branch missing merge: %v %q", err, out)
+	}
+}
+
+func TestDiffBetween(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/diff"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "new.go"), "package n\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "add new.go")
+	stats, files, commits, ahead, behind, err := DiffBetween(dir, "main", "ai-dev/diff")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead < 1 || behind != 0 {
+		t.Fatalf("ahead=%d behind=%d", ahead, behind)
+	}
+	if stats.FilesChanged < 1 || len(files) < 1 || len(commits) < 1 {
+		t.Fatalf("stats=%+v files=%d commits=%d", stats, len(files), len(commits))
+	}
+	if !strings.Contains(files[0].Patch, "new.go") && files[0].Path != "new.go" {
+		t.Fatalf("unexpected file %+v", files[0])
 	}
 }
