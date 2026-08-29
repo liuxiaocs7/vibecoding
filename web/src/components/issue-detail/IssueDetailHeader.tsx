@@ -1,0 +1,102 @@
+import React from 'react';
+import { Issue } from '../../types';
+import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
+import { THEME_CONFIGS } from '../../lib/theme';
+import { specReadyForDev } from '../../lib/subreq';
+import { X, Play, Trash2 } from 'lucide-react';
+
+interface IssueDetailHeaderProps {
+  issue: Issue;
+  lang: Language;
+  themeStyle: ThemeStyle;
+  onClose: () => void;
+  onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
+  onDeleteIssue?: (issueId: string) => void;
+  setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
+}
+
+export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
+  issue,
+  lang,
+  themeStyle,
+  onClose,
+  onStartAutoDev,
+  onDeleteIssue,
+  setActiveTab,
+}) => {
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const t = getTranslation(lang);
+
+  return (
+    <div className={`p-5 border-b flex items-center justify-between gap-4 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+      <div className="flex items-center gap-3 overflow-hidden">
+        <span
+          className={`px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider shrink-0 border ${
+            issue.status === 'requirements'
+              ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-600 dark:text-cyan-300'
+              : issue.status === 'backlog'
+              ? 'bg-amber-500/10 border-amber-500/30 text-amber-600 dark:text-amber-300'
+              : issue.status === 'in_progress'
+              ? 'bg-indigo-500/10 border-indigo-500/30 text-indigo-600 dark:text-indigo-300 animate-pulse'
+              : issue.status === 'in_review'
+              ? 'bg-purple-500/10 border-purple-500/30 text-purple-600 dark:text-purple-300'
+              : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-600 dark:text-emerald-300'
+          }`}
+        >
+          {issue.status === 'requirements'
+            ? '需求列表'
+            : issue.status === 'backlog'
+            ? '待执行'
+            : issue.status === 'in_progress'
+            ? '进行中'
+            : issue.status === 'in_review'
+            ? '待评审'
+            : '已完成'}
+        </span>
+
+        <div className="overflow-hidden min-w-0">
+          <h2 className={`text-lg font-bold truncate ${themeConfig.textPrimary}`}>{issue.title}</h2>
+          <div className={`flex items-center gap-2 text-xs mt-0.5 ${themeConfig.textSecondary}`}>
+            <span className="shrink-0">Issue #{issue.id}</span>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex items-center gap-2 shrink-0">
+        {issue.status === 'backlog' && specReadyForDev(issue) && (
+          <button
+            onClick={() => {
+              onStartAutoDev(issue.id);
+              setActiveTab('console');
+            }}
+            className="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-semibold text-xs rounded-xl shadow flex items-center gap-1.5 transition-all"
+          >
+            <Play className="w-3.5 h-3.5 fill-current" />
+            启动自治开发
+          </button>
+        )}
+
+        {onDeleteIssue && (
+          <button
+            onClick={() => {
+              if (window.confirm(t.deleteIssueConfirm)) {
+                onDeleteIssue(issue.id);
+                onClose();
+              }
+            }}
+            className={`p-2 rounded-xl transition-colors text-rose-400 hover:bg-rose-500/10`}
+            title={t.deleteIssueTitle}
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
+        <button
+          onClick={onClose}
+          className={`p-2 rounded-xl transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
+        >
+          <X className="w-5 h-5" />
+        </button>
+      </div>
+    </div>
+  );
+};
