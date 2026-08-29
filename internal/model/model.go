@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -168,6 +169,92 @@ type AutoDevLog struct {
 	Details   string `json:"details,omitempty"`
 }
 
+
+type WorktreeRef struct {
+	RepoID   string `json:"repoId"`
+	RepoName string `json:"repoName"`
+	Path     string `json:"path"`
+}
+
+type QualityGate struct {
+	TestsRan     bool   `json:"testsRan"`
+	TestsPassed  bool   `json:"testsPassed"`
+	TestsOutput  string `json:"testsOutput,omitempty"`
+	LintRan      bool   `json:"lintRan"`
+	LintPassed   bool   `json:"lintPassed"`
+	LintOutput   string `json:"lintOutput,omitempty"`
+	RepairRounds int    `json:"repairRounds"`
+}
+
+// ExecutorConfig selects how Auto-Dev produces code.
+type ExecutorConfig struct {
+	Type        string   `json:"type"` // "llm" (default) | "agent"
+	Preset      string   `json:"preset"` // claude | cursor | codex | custom
+	Command     string   `json:"command,omitempty"`
+	Args        []string `json:"args,omitempty"` // may contain {prompt}
+	PromptStdin bool     `json:"promptStdin,omitempty"`
+	TimeoutSec  int      `json:"timeoutSec"` // default 1800
+	MaxHeal     int      `json:"maxHeal"`    // default 2
+}
+
+func DefaultExecutorConfig() ExecutorConfig {
+	return ExecutorConfig{
+		Type:       "llm",
+		TimeoutSec: 1800,
+		MaxHeal:    2,
+	}
+}
+
+// Normalize fills defaults and clamps invalid values without mutating secrets.
+func (c ExecutorConfig) Normalize() ExecutorConfig {
+	out := c
+	if out.Type != "agent" {
+		out.Type = "llm"
+	}
+	if out.TimeoutSec <= 0 {
+		out.TimeoutSec = 1800
+	}
+	if out.MaxHeal < 0 {
+		out.MaxHeal = 0
+	}
+	if out.MaxHeal > 5 {
+		out.MaxHeal = 5
+	}
+	if out.Type == "agent" && out.Preset == "" {
+		out.Preset = "claude"
+	}
+	return out
+}
+
+// Validate reports whether an agent config is usable.
+func (c ExecutorConfig) Validate() error {
+	c = c.Normalize()
+	if c.Type != "agent" {
+		return nil
+	}
+	switch c.Preset {
+	case "claude", "cursor", "codex":
+		return nil
+	case "custom":
+		if strings.TrimSpace(c.Command) == "" {
+			return fmt.Errorf("custom executor requires command")
+		}
+		hasPlaceholder := false
+		for _, a := range c.Args {
+			if strings.Contains(a, "{prompt}") {
+				hasPlaceholder = true
+				break
+			}
+		}
+		if !hasPlaceholder && !c.PromptStdin {
+			return fmt.Errorf("custom executor requires {prompt} in args or promptStdin")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown executor preset %q", c.Preset)
+	}
+}
+
 type DiffStats struct {
 	Additions    int `json:"additions"`
 	Deletions    int `json:"deletions"`
@@ -175,14 +262,18 @@ type DiffStats struct {
 }
 
 type PRInfo struct {
-	ID          string    `json:"id"`
-	BranchName  string    `json:"branchName"`
-	Title       string    `json:"title"`
-	Description string    `json:"description"`
-	Author      string    `json:"author"`
-	CreatedAt   string    `json:"createdAt"`
-	Status      string    `json:"status"` // open | merged | rejected
-	DiffStats   DiffStats `json:"diffStats"`
+	ID          string        `json:"id"`
+	BranchName  string        `json:"branchName"`
+	Title       string        `json:"title"`
+	Description string        `json:"description"`
+	Author      string        `json:"author"`
+	CreatedAt   string        `json:"createdAt"`
+	Status      string        `json:"status"` // open | merged | rejected
+	DiffStats   DiffStats     `json:"diffStats"`
+	Worktrees   []WorktreeRef `json:"worktrees,omitempty"`
+	BaseBranch  string        `json:"baseBranch,omitempty"`
+	Quality     *QualityGate  `json:"quality,omitempty"`
+	Executor    string        `json:"executor,omitempty"`
 }
 
 type Issue struct {
@@ -328,6 +419,7 @@ type AutoDevJob struct {
 	Phase     string           `json:"phase,omitempty"`
 	Error     string           `json:"error,omitempty"`
 	PRInfo    *PRInfo          `json:"prInfo,omitempty"`
+	Executor  string           `json:"executor,omitempty"`
 	CreatedAt string           `json:"createdAt"`
 	UpdatedAt string           `json:"updatedAt"`
 }

@@ -496,3 +496,23 @@ func (s *Store) ListJobLogs(jobID string) ([]model.AutoDevLog, error) {
 	}
 	return out, rows.Err()
 }
+
+func (s *Store) GetExecutorConfig() (model.ExecutorConfig, error) {
+	cfg := model.DefaultExecutorConfig()
+	ok, err := s.GetSetting("executor_config", &cfg)
+	if err != nil {
+		return cfg, err
+	}
+	if !ok {
+		return model.DefaultExecutorConfig(), nil
+	}
+	return cfg.Normalize(), nil
+}
+
+func (s *Store) PutExecutorConfig(cfg model.ExecutorConfig) error {
+	cfg = cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	return s.PutSetting("executor_config", cfg)
+}
