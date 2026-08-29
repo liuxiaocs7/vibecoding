@@ -57,12 +57,12 @@ func mustExecutorConfig(s *Server) model.ExecutorConfig {
 }
 
 type issueDiffResponse struct {
-	IssueID    string           `json:"issueId"`
-	BranchName string           `json:"branchName"`
-	BaseBranch string           `json:"baseBranch,omitempty"`
-	Executor   string           `json:"executor,omitempty"`
+	IssueID    string             `json:"issueId"`
+	BranchName string             `json:"branchName"`
+	BaseBranch string             `json:"baseBranch,omitempty"`
+	Executor   string             `json:"executor,omitempty"`
 	Quality    *model.QualityGate `json:"quality,omitempty"`
-	Repos      []repoDiff       `json:"repos"`
+	Repos      []repoDiff         `json:"repos"`
 }
 
 type repoDiff struct {
@@ -224,4 +224,41 @@ func (s *Server) approveMergeSafe(issue *model.Issue, repos []model.GitRepo) err
 	})
 	issue.UpdatedAt = model.NowISO()
 	return s.Store.UpsertIssue(*issue)
+}
+
+func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	if issue.PRInfo == nil || issue.PRInfo.BranchName == "" {
+		writeErr(w, 400, "no PR/branch to merge")
+		return
+	}
+	proj, err := s.Store.GetProject(issue.ProjectID)
+	if err != nil || proj == nil {
+		writeErr(w, 404, "project not found")
+		return
+	}
+	var repos []model.GitRepo
+	for _, rid := range issue.AssociatedRepoIDs {
+		for _, gr := range proj.GitRepos {
+			if gr.ID == rid {
+				repos = append(repos, gr)
+			}
+		}
+	}
+	if err := s.approveMergeSafe(issue, repos); err != nil {
+		// Dirty default branch / merge conflicts surface as 409-ish client errors.
+		msg := err.Error()
+		status := 500
+		if strings.Contains(msg, "uncommitted changes") {
+			status = 409
+		}
+		writeErr(w, status, msg)
+		return
+	}
+	writeJSON(w, 200, issue)
 }

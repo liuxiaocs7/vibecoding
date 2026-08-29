@@ -1,0 +1,197 @@
+package api
+
+import (
+	"context"
+	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/ymhhh/vibecoding/internal/gitx"
+	"github.com/ymhhh/vibecoding/internal/llm"
+	"github.com/ymhhh/vibecoding/internal/model"
+)
+
+func (s *Server) handleValidateRepo(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Path) == "" {
+		writeErr(w, 400, "path required")
+		return
+	}
+	info, err := gitx.ValidateRepo(body.Path)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"ok": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, info)
+}
+
+func (s *Server) resolveModel(projectID string) (model.ModelConfig, error) {
+	cfg, err := s.Store.GetModelConfig()
+	if err != nil {
+		return cfg, err
+	}
+	if projectID == "" {
+		return cfg, nil
+	}
+	p, err := s.Store.GetProject(projectID)
+	if err != nil || p == nil {
+		return cfg, nil
+	}
+	if p.UseCustomModelConfig && p.CustomModelConfig != nil && strings.TrimSpace(p.CustomModelConfig.OpenAIAPIKey) != "" {
+		return *p.CustomModelConfig, nil
+	}
+	return cfg, nil
+}
+
+type chatBody struct {
+	Prompt           string              `json:"prompt"`
+	Messages         []model.ChatMessage `json:"messages"`
+	IssueTitle       string              `json:"issueTitle"`
+	IssueDescription string              `json:"issueDescription"`
+	AssociatedRepos  []repoRef           `json:"associatedRepos"`
+	GenerateSpec     bool                `json:"generateSpec"`
+	ProjectID        string              `json:"projectId"`
+	IssueID          string              `json:"issueId"`
+}
+
+type repoRef struct {
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	DefaultBranch string `json:"defaultBranch"`
+}
+
+func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
+	var body chatBody
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, 400, "invalid JSON")
+		return
+	}
+	cfg, err := s.resolveModel(body.ProjectID)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+
+	var repoLines []string
+	for _, repo := range body.AssociatedRepos {
+		repoLines = append(repoLines, fmt.Sprintf("%s @ %s (branch %s)", repo.Name, repo.Path, repo.DefaultBranch))
+	}
+
+	system := `You are a Senior VibeCoding AI Architect & Staff Software Engineer.
+Assist with requirements analysis, architecture, and Development Specification Documents.
+
+Issue Context:
+- Title: ` + body.IssueTitle + `
+- Description: ` + body.IssueDescription + `
+- Associated Local Repositories: ` + strings.Join(repoLines, "; ")
+
+	if body.GenerateSpec {
+		system += `
+
+When asked to create/update a Dev Spec, respond with helpful analysis in markdown.
+Prefer structured sections: Summary, Architecture, Target Files, Implementation Steps, Test Cases.`
+	}
+
+	msgs := make([]llm.ChatMessage, 0, len(body.Messages)+1)
+	for _, m := range body.Messages {
+		role := "assistant"
+		if m.Sender == "user" {
+			role = "user"
+		} else if m.Sender == "system" {
+			role = "system"
+		}
+		msgs = append(msgs, llm.ChatMessage{Role: role, Content: m.Text})
+	}
+	if body.Prompt != "" {
+		msgs = append(msgs, llm.ChatMessage{Role: "user", Content: body.Prompt})
+	}
+
+	// Allow rate-limit retries (up to 10) with backoff.
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	defer cancel()
+	chatReq := llm.ChatRequest{
+		ModelConfig: cfg,
+		System:      system,
+		Messages:    msgs,
+		Temperature: cfg.Temperature,
+	}
+
+	if wantsStream(r) {
+		sse, err := newSSE(w)
+		if err != nil {
+			writeErr(w, 500, err.Error())
+			return
+		}
+		_ = sse.event(map[string]any{"type": "status", "message": "calling_model"})
+		text, err := s.LLM.ChatStream(ctx, chatReq, func(delta string) {
+			_ = sse.event(map[string]any{"type": "delta", "text": delta})
+		})
+		if err != nil {
+			_ = sse.event(map[string]any{"type": "error", "error": err.Error()})
+			return
+		}
+		_ = sse.event(map[string]any{"type": "done", "text": text})
+		return
+	}
+
+	text, err := s.LLM.Chat(ctx, chatReq)
+	if err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	writeJSON(w, 200, map[string]string{"text": text})
+}
+
+func (s *Server) handleTestOpenAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		OpenAIBaseURL string `json:"openAIBaseUrl"`
+		OpenAIAPIKey  string `json:"openAIApiKey"`
+		OpenAIModel   string `json:"openAIModel"`
+		ProjectID     string `json:"projectId"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeErr(w, 400, "invalid JSON")
+		return
+	}
+	key := strings.TrimSpace(body.OpenAIAPIKey)
+	baseURL := strings.TrimSpace(body.OpenAIBaseURL)
+	modelName := strings.TrimSpace(body.OpenAIModel)
+	// Blank key: prefer project custom config when projectId is set, else global.
+	if key == "" {
+		if body.ProjectID != "" {
+			if p, _ := s.Store.GetProject(body.ProjectID); p != nil &&
+				p.UseCustomModelConfig && p.CustomModelConfig != nil &&
+				strings.TrimSpace(p.CustomModelConfig.OpenAIAPIKey) != "" {
+				key = p.CustomModelConfig.OpenAIAPIKey
+				if baseURL == "" {
+					baseURL = p.CustomModelConfig.OpenAIBaseURL
+				}
+				if modelName == "" {
+					modelName = p.CustomModelConfig.OpenAIModel
+				}
+			}
+		}
+		if key == "" {
+			cfg, _ := s.Store.GetModelConfig()
+			key = cfg.OpenAIAPIKey
+			if baseURL == "" {
+				baseURL = cfg.OpenAIBaseURL
+			}
+			if modelName == "" {
+				modelName = cfg.OpenAIModel
+			}
+		}
+	}
+	// Connectivity test shares OpenAPI retries (10) for 429 rate limits.
+	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	defer cancel()
+	reply, err := s.LLM.TestOpenAPI(ctx, baseURL, key, modelName)
+	if err != nil {
+		writeJSON(w, 400, map[string]any{"success": false, "error": err.Error()})
+		return
+	}
+	writeJSON(w, 200, map[string]any{"success": true, "message": reply})
+}
