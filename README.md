@@ -145,11 +145,26 @@ Open http://localhost:3000
 ## Typical product workflow
 
 1. Open **LLM settings** and save the full chat-completions URL + API Key (stored only in local SQLite).
-2. Create a **Project** and add a local git repository path (**Validate path**).
-3. Create an **Issue**, chat with the AI, then **Extract Dev Spec**. Large issues can be **split into sub-requirements**, each with its own spec. Chat can update every sub-spec at once, or a single sub-spec.
-4. **Accept Spec → Backlog**, then **Start Auto-Dev**. Split issues are implemented in order, with one commit per sub-requirement.
-5. Watch live logs (SSE). On success the issue moves to **In Review**. If review fails, rework the whole issue or one sub-requirement, update specs, and re-run Auto-Dev.
-6. **Approve & Merge** to merge the feature branch into the repo default branch locally.
+2. Optionally open **Coding Executor** in the same settings: default is built-in LLM (VibeBot); or pick Claude Code / Cursor / Codex / a custom CLI if installed and logged in on this machine.
+3. Create a **Project** and add a local git repository path (**Validate path**).
+4. Create an **Issue**, chat with the AI, then **Extract Dev Spec**. Large issues can be **split into sub-requirements**, each with its own spec. Chat can update every sub-spec at once, or a single sub-spec.
+5. **Accept Spec → Backlog**, then **Start Auto-Dev**. Split issues are implemented in order, with one commit per sub-requirement. Coding runs in isolated git worktrees under `{data-dir}/worktrees/{issueID}/{repoID}/` (default `~/.vibecoding/worktrees/...`) so your main checkout and dirty files stay untouched.
+6. Watch live logs (SSE), including agent CLI output when that executor is selected. On success the issue moves to **In Review** with a **real** file tree + unified diff and quality-gate results. Failed tests may auto-heal up to `maxHeal` rounds (default 2); still failing returns the issue to Backlog and keeps the worktree for inspection. Rework can target the whole issue or one sub-requirement.
+7. **Approve & Merge** merges the feature branch into the repo default branch locally (refuses if that branch is checked out and dirty), then removes the worktree. You can also open the worktree in Cursor / VS Code from the review UI.
+
+Design details: [docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md).
+
+### Coding executors (optional CLI)
+
+| Preset | Typical binary | Notes |
+|--------|----------------|-------|
+| Built-in LLM | (app settings) | Default. Uses your OpenAI-compatible key. |
+| Claude | `claude` | Install/login via Anthropic Claude Code. App does not install or log in for you. |
+| Cursor | `cursor-agent` or `agent` | Cursor CLI agent. Do **not** pass Cursor’s `--worktree` — Auto-Dev already uses its own worktree as cwd. |
+| Codex | `codex` | OpenAI Codex CLI. |
+| Custom | your command | Must pass `{prompt}` in args and/or enable stdin. |
+
+Unattended permission flags (YOLO / skip-permissions) are only used because **cwd is the isolated worktree**, not your primary working tree. Vibecoding does not forward its LLM API key into these CLIs; they use their own auth (`ANTHROPIC_API_KEY`, Cursor login, etc.).
 
 ---
 
@@ -194,7 +209,8 @@ Desktop cannot be reliably cross-compiled here; build desktop on each target OS 
 
 - Server default bind is localhost-only (`127.0.0.1`). Use `--addr 0.0.0.0:8090` only when you intend remote access (e.g. Docker port publish).
 - API keys are stored in the local SQLite DB under `--data-dir`, not in the frontend.
-- Auto-Dev only writes inside configured repository paths.
+- Auto-Dev writes inside isolated worktrees under `{data-dir}/worktrees/...` and commits on feature branches; it does not checkout your primary working tree. Agent CLIs may skip interactive permission prompts only in that worktree cwd.
+- Merging refuses when the default branch is checked out and dirty — commit or stash first.
 
 ## License
 

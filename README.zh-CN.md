@@ -145,11 +145,26 @@ make dev
 ## 典型使用流程
 
 1. 打开 **LLM 设置**，保存完整的 chat-completions URL 与 API Key（仅存储在本地 SQLite）。
-2. 创建**项目**，添加本地 git 仓库路径（用 **Validate path** 校验）。
-3. 创建**需求（Issue）**，与 AI 对话，然后 **Extract Dev Spec** 提取开发规格。需求较大时可 **拆分子需求**，每份独立待开发文档；支持全局描述改全部子文档，或针对单个子需求修改。
-4. **Accept Spec → Backlog**，随后 **Start Auto-Dev** 启动自动开发（有子需求时按顺序逐一编码并提交）。
-5. 观看实时日志（SSE）。成功后需求进入 **In Review**，审核全部提交。若不满足，可对整单或某个子需求二次描述、改文档后重新开发。
-6. **Approve & Merge** 在本地把特性分支合并到仓库默认分支。
+2. 可在同一设置中配置 **编码执行器**：默认内置 LLM（VibeBot）；也可选用本机已安装并登录的 Claude Code / Cursor / Codex / 自定义 CLI。
+3. 创建**项目**，添加本地 git 仓库路径（用 **Validate path** 校验）。
+4. 创建**需求（Issue）**，与 AI 对话，然后 **Extract Dev Spec** 提取开发规格。需求较大时可 **拆分子需求**，每份独立待开发文档；支持全局描述改全部子文档，或针对单个子需求修改。
+5. **Accept Spec → Backlog**，随后 **Start Auto-Dev**。有子需求时按顺序逐一编码并提交。编码发生在隔离 git worktree：`{data-dir}/worktrees/{issueID}/{repoID}/`（默认 `~/.vibecoding/worktrees/...`），主仓当前分支与未提交改动保持不变。
+6. 观看实时日志（SSE）；选用 Agent CLI 时可见其输出。成功后进入 **In Review**，展示**真实**文件树、unified diff 与质量门禁。测试失败最多自愈 `maxHeal` 轮（默认 2）；仍失败则回 Backlog 并保留 worktree 便于对照。返工可针对整单或单个子需求。
+7. **Approve & Merge** 在本地把特性分支合入默认分支（若默认分支正被 checkout 且 dirty 会拒绝），然后删除 worktree。也可在评审页用 Cursor / VS Code 打开该 worktree。
+
+设计说明见：[docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md)。
+
+### 编码执行器（可选 CLI）
+
+| Preset | 常见二进制 | 说明 |
+|--------|------------|------|
+| 内置 LLM |（应用设置） | 默认。使用你配置的 OpenAI 兼容 Key。 |
+| Claude | `claude` | 自行安装并登录 Anthropic Claude Code；本应用不代装、不代登录。 |
+| Cursor | `cursor-agent` 或 `agent` | Cursor CLI agent。**不要**再传 Cursor 的 `--worktree`——Auto-Dev 已把本工程 worktree 设为 cwd。 |
+| Codex | `codex` | OpenAI Codex CLI。 |
+| Custom | 自定义命令 | Args 须含 `{prompt}`，和/或启用 stdin。 |
+
+无人值守跳过权限（YOLO）**仅因为 cwd 是隔离 worktree**，不是你的主工作区。Vibecoding 不会把应用内 LLM Key 传给这些 CLI；它们使用各自登录态 / `ANTHROPIC_API_KEY` 等。
 
 ---
 
@@ -194,7 +209,8 @@ make release
 
 - 服务版默认仅绑定本机（`127.0.0.1`）。仅当确实需要远程访问（如 Docker 端口映射）时才使用 `--addr 0.0.0.0:8090`。
 - API Key 存储在 `--data-dir` 下的本地 SQLite 中，不保存在前端。
-- Auto-Dev 只会在已配置的仓库路径内写入。
+- Auto-Dev 写入隔离 worktree（`{data-dir}/worktrees/...`）并在特性分支上提交，不会 checkout 你的主工作区；Agent CLI 的跳过权限提示仅作用于该 worktree cwd。
+- 若默认分支正被 checkout 且工作区 dirty，合并会被拒绝——请先 commit 或 stash。
 
 ## 许可证
 
