@@ -146,9 +146,9 @@ make dev
 
 1. 打开 **LLM 设置**，保存完整的 chat-completions URL 与 API Key（仅存储在本地 SQLite）。
 2. 创建**项目**，添加本地 git 仓库路径（用 **Validate path** 校验）。
-3. 创建**需求（Issue）**，与 AI 对话，然后 **Extract Dev Spec** 提取开发规格。
-4. **Accept Spec → Backlog**，随后 **Start Auto-Dev** 启动自动开发。
-5. 观看实时日志（SSE）。成功后需求进入 **In Review**。
+3. 创建**需求（Issue）**，与 AI 对话，然后 **Extract Dev Spec** 提取开发规格。需求较大时可 **拆分子需求**，每份独立待开发文档；支持全局描述改全部子文档，或针对单个子需求修改。
+4. **Accept Spec → Backlog**，随后 **Start Auto-Dev** 启动自动开发（有子需求时按顺序逐一编码并提交）。
+5. 观看实时日志（SSE）。成功后需求进入 **In Review**，审核全部提交。若不满足，可对整单或某个子需求二次描述、改文档后重新开发。
 6. **Approve & Merge** 在本地把特性分支合并到仓库默认分支。
 
 ---

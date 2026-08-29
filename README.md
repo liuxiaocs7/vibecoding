@@ -146,9 +146,9 @@ Open http://localhost:3000
 
 1. Open **LLM settings** and save the full chat-completions URL + API Key (stored only in local SQLite).
 2. Create a **Project** and add a local git repository path (**Validate path**).
-3. Create an **Issue**, chat with the AI, then **Extract Dev Spec**.
-4. **Accept Spec → Backlog**, then **Start Auto-Dev**.
-5. Watch live logs (SSE). On success the issue moves to **In Review**.
+3. Create an **Issue**, chat with the AI, then **Extract Dev Spec**. Large issues can be **split into sub-requirements**, each with its own spec. Chat can update every sub-spec at once, or a single sub-spec.
+4. **Accept Spec → Backlog**, then **Start Auto-Dev**. Split issues are implemented in order, with one commit per sub-requirement.
+5. Watch live logs (SSE). On success the issue moves to **In Review**. If review fails, rework the whole issue or one sub-requirement, update specs, and re-run Auto-Dev.
 6. **Approve & Merge** to merge the feature branch into the repo default branch locally.
 
 ---

@@ -428,3 +428,288 @@ func buildMarkdown(title, summary, arch string, files []model.SpecFileChange, st
 	}
 	return b.String()
 }
+
+type parsedSpecFields struct {
+	ID                  string                 `json:"id"`
+	Title               string                 `json:"title"`
+	Description         string                 `json:"description"`
+	Summary             string                 `json:"summary"`
+	ArchitectureDesign  string                 `json:"architectureDesign"`
+	FileChanges         []model.SpecFileChange `json:"fileChanges"`
+	ImplementationSteps []string               `json:"implementationSteps"`
+	TestCases           []string               `json:"testCases"`
+	RawMarkdown         string                 `json:"rawMarkdown"`
+}
+
+func specFromFields(p parsedSpecFields, titleFallback string) *model.DevSpec {
+	if p.Title == "" {
+		p.Title = titleFallback
+	}
+	if p.FileChanges == nil {
+		p.FileChanges = []model.SpecFileChange{}
+	}
+	if p.ImplementationSteps == nil {
+		p.ImplementationSteps = []string{}
+	}
+	if p.TestCases == nil {
+		p.TestCases = []string{}
+	}
+	md := strings.TrimSpace(p.RawMarkdown)
+	if md == "" {
+		md = buildMarkdown(p.Title, p.Summary, p.ArchitectureDesign, p.FileChanges, p.ImplementationSteps, p.TestCases)
+	}
+	if p.Title != "" && !strings.HasPrefix(md, "#") {
+		md = "# " + p.Title + "\n\n" + md
+	}
+	return &model.DevSpec{
+		Title:               p.Title,
+		Summary:             p.Summary,
+		ArchitectureDesign:  p.ArchitectureDesign,
+		FileChanges:         p.FileChanges,
+		ImplementationSteps: p.ImplementationSteps,
+		TestCases:           p.TestCases,
+		RawMarkdown:         md,
+		UpdatedAt:           model.NowISO(),
+	}
+}
+
+func unwrapJSONObject(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return raw
+	}
+	if strings.HasPrefix(raw, "```") {
+		raw = strings.TrimPrefix(raw, "```json")
+		raw = strings.TrimPrefix(raw, "```JSON")
+		raw = strings.TrimPrefix(raw, "```")
+		if i := strings.LastIndex(raw, "```"); i >= 0 {
+			raw = raw[:i]
+		}
+		raw = strings.TrimSpace(raw)
+	}
+	if !strings.HasPrefix(raw, "{") {
+		if i := strings.Index(raw, "{"); i >= 0 {
+			if j := strings.LastIndex(raw, "}"); j > i {
+				raw = raw[i : j+1]
+			}
+		}
+	}
+	return raw
+}
+
+// SplitResult is the LLM output when breaking a large issue into sub-requirements.
+type SplitResult struct {
+	ChatReply        string
+	OverviewMarkdown string
+	OverviewSpec     *model.DevSpec
+	SubRequirements  []model.SubRequirement
+}
+
+func ParseSplitJSON(raw string, titleFallback string) (*SplitResult, error) {
+	raw = unwrapJSONObject(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty model response")
+	}
+	var parsed struct {
+		ChatReply        string             `json:"chatReply"`
+		OverviewMarkdown string             `json:"overviewMarkdown"`
+		Title            string             `json:"title"`
+		Summary          string             `json:"summary"`
+		RawMarkdown      string             `json:"rawMarkdown"`
+		SubRequirements  []parsedSpecFields `json:"subRequirements"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("parse split response: %w", err)
+	}
+	if len(parsed.SubRequirements) == 0 {
+		return nil, fmt.Errorf("model returned no subRequirements")
+	}
+	overviewMD := strings.TrimSpace(parsed.OverviewMarkdown)
+	if overviewMD == "" {
+		overviewMD = strings.TrimSpace(parsed.RawMarkdown)
+	}
+	overviewTitle := parsed.Title
+	if overviewTitle == "" {
+		overviewTitle = titleFallback
+	}
+	if overviewMD == "" {
+		var b strings.Builder
+		b.WriteString("# ")
+		b.WriteString(overviewTitle)
+		b.WriteString("\n\n## 子需求拆分 / Sub-requirements\n\n")
+		for i, sub := range parsed.SubRequirements {
+			title := sub.Title
+			if title == "" {
+				title = fmt.Sprintf("Sub %d", i+1)
+			}
+			b.WriteString(fmt.Sprintf("%d. **%s** — %s\n", i+1, title, firstNonEmpty(sub.Description, sub.Summary)))
+		}
+		overviewMD = b.String()
+	}
+	overview := &model.DevSpec{
+		Title:               overviewTitle,
+		Summary:             parsed.Summary,
+		ArchitectureDesign:  "",
+		FileChanges:         []model.SpecFileChange{},
+		ImplementationSteps: []string{},
+		TestCases:           []string{},
+		RawMarkdown:         overviewMD,
+		UpdatedAt:           model.NowISO(),
+	}
+	subs := make([]model.SubRequirement, 0, len(parsed.SubRequirements))
+	for i, fields := range parsed.SubRequirements {
+		title := fields.Title
+		if title == "" {
+			title = fmt.Sprintf("%s (%d)", titleFallback, i+1)
+		}
+		spec := specFromFields(fields, title)
+		id := strings.TrimSpace(fields.ID)
+		if id == "" {
+			id = fmt.Sprintf("sub-%s-%d", shortID(titleFallback), i+1)
+		}
+		status := model.SubReqPending
+		if spec != nil && strings.TrimSpace(spec.RawMarkdown) != "" {
+			status = model.SubReqReady
+		}
+		subs = append(subs, model.SubRequirement{
+			ID:           id,
+			Title:        title,
+			Description:  firstNonEmpty(fields.Description, fields.Summary),
+			Order:        i + 1,
+			Status:       status,
+			DevSpec:      spec,
+			ChatMessages: []model.ChatMessage{},
+			AutoDevLogs:  []model.AutoDevLog{},
+		})
+	}
+	reply := strings.TrimSpace(parsed.ChatReply)
+	if reply == "" {
+		reply = fmt.Sprintf("已将需求拆分为 %d 个子需求，可分别或全局修改待开发文档。", len(subs))
+	}
+	return &SplitResult{
+		ChatReply:        reply,
+		OverviewMarkdown: overviewMD,
+		OverviewSpec:     overview,
+		SubRequirements:  subs,
+	}, nil
+}
+
+// MultiSubSpecResult is a global (all-subs) spec revision.
+type MultiSubSpecResult struct {
+	ChatReply       string
+	OverviewSpec    *model.DevSpec
+	SubRequirements []parsedSpecFields
+}
+
+func ParseMultiSubSpecJSON(raw string, titleFallback string) (*MultiSubSpecResult, error) {
+	raw = unwrapJSONObject(raw)
+	if raw == "" {
+		return nil, fmt.Errorf("empty model response")
+	}
+	var parsed struct {
+		ChatReply        string             `json:"chatReply"`
+		OverviewMarkdown string             `json:"overviewMarkdown"`
+		Title            string             `json:"title"`
+		RawMarkdown      string             `json:"rawMarkdown"`
+		SubRequirements  []parsedSpecFields `json:"subRequirements"`
+	}
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		return nil, fmt.Errorf("parse multi-spec response: %w", err)
+	}
+	out := &MultiSubSpecResult{
+		ChatReply:       strings.TrimSpace(parsed.ChatReply),
+		SubRequirements: parsed.SubRequirements,
+	}
+	if out.ChatReply == "" {
+		out.ChatReply = "已根据全局描述更新全部子需求待开发文档。"
+	}
+	overviewMD := strings.TrimSpace(parsed.OverviewMarkdown)
+	if overviewMD == "" {
+		overviewMD = strings.TrimSpace(parsed.RawMarkdown)
+	}
+	if overviewMD != "" {
+		title := parsed.Title
+		if title == "" {
+			title = titleFallback
+		}
+		out.OverviewSpec = &model.DevSpec{
+			Title:               title,
+			Summary:             "",
+			ArchitectureDesign:  "",
+			FileChanges:         []model.SpecFileChange{},
+			ImplementationSteps: []string{},
+			TestCases:           []string{},
+			RawMarkdown:         overviewMD,
+			UpdatedAt:           model.NowISO(),
+		}
+	}
+	return out, nil
+}
+
+func ApplyMultiSubSpec(issue *model.Issue, parsed *MultiSubSpecResult) {
+	if issue == nil || parsed == nil {
+		return
+	}
+	if parsed.OverviewSpec != nil {
+		issue.DevSpec = parsed.OverviewSpec
+	}
+	if len(parsed.SubRequirements) == 0 {
+		return
+	}
+	used := make([]bool, len(issue.SubRequirements))
+	for i, fields := range parsed.SubRequirements {
+		idx := -1
+		if id := strings.TrimSpace(fields.ID); id != "" {
+			for j := range issue.SubRequirements {
+				if issue.SubRequirements[j].ID == id {
+					idx = j
+					break
+				}
+			}
+		}
+		if idx < 0 && i < len(issue.SubRequirements) && !used[i] {
+			idx = i
+		}
+		if idx < 0 || idx >= len(issue.SubRequirements) {
+			continue
+		}
+		used[idx] = true
+		title := fields.Title
+		if title == "" {
+			title = issue.SubRequirements[idx].Title
+		}
+		spec := specFromFields(fields, title)
+		issue.SubRequirements[idx].Title = title
+		if d := strings.TrimSpace(fields.Description); d != "" {
+			issue.SubRequirements[idx].Description = d
+		}
+		issue.SubRequirements[idx].DevSpec = spec
+		if spec != nil && strings.TrimSpace(spec.RawMarkdown) != "" &&
+			issue.SubRequirements[idx].Status != model.SubReqInProgress &&
+			issue.SubRequirements[idx].Status != model.SubReqDone {
+			issue.SubRequirements[idx].Status = model.SubReqReady
+		}
+	}
+}
+
+func shortID(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "item"
+	}
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if n >= 8 {
+			break
+		}
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			n++
+		}
+	}
+	if b.Len() == 0 {
+		return "item"
+	}
+	return strings.ToLower(b.String())
+}

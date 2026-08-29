@@ -4,6 +4,7 @@ import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './li
 import { Language, ThemeStyle, getTranslation } from './lib/i18n';
 import { THEME_CONFIGS } from './lib/theme';
 import { api, subscribeJobEvents } from './lib/api';
+import { hasSubRequirements, specReadyForDev } from './lib/subreq';
 import { KanbanBoard } from './components/KanbanBoard';
 import { IssueDetailModal } from './components/IssueDetailModal';
 import { ProjectModal } from './components/ProjectModal';
@@ -233,15 +234,15 @@ export default function App() {
     [activeProjectId, patchIssueLocal, refreshIssues, showToast]
   );
 
-  const handleStartAutoDev = async (issueId: string) => {
+  const handleStartAutoDev = async (issueId: string, subRequirementId?: string) => {
     const targetIssue = issues.find((i) => i.id === issueId);
     if (!targetIssue) return;
     if (targetIssue.status === 'in_progress' && autoDevJobs.current.has(issueId)) {
       showToast('info', t.autoDevAlreadyRunning);
       return;
     }
-    if (!targetIssue.devSpec) {
-      showToast('error', t.autoDevNeedsSpec);
+    if (!specReadyForDev(targetIssue)) {
+      showToast('error', hasSubRequirements(targetIssue) ? t.autoDevNeedsSubSpecs : t.autoDevNeedsSpec);
       return;
     }
     if (!targetIssue.associatedRepoIds?.length) {
@@ -250,7 +251,7 @@ export default function App() {
     }
 
     try {
-      const job = await api.startAutoDev(issueId);
+      const job = await api.startAutoDev(issueId, subRequirementId);
       autoDevJobs.current.set(issueId, job.id);
       patchIssueLocal({
         ...targetIssue,
@@ -278,6 +279,7 @@ export default function App() {
             ];
           }
           if (ev.prInfo) next.prInfo = ev.prInfo;
+          if (ev.subRequirementId) next.currentSubId = ev.subRequirementId;
           if (ev.type === 'done' && ev.status === 'completed') {
             next.status = 'in_review';
             next.autoDevProgress = 100;
@@ -344,8 +346,8 @@ export default function App() {
     const target = issues.find((i) => i.id === issueId);
     if (!target) return;
     if (newStatus === 'backlog') {
-      if (!target.devSpec?.rawMarkdown?.trim()) {
-        showToast('error', t.backlogNeedsSpec);
+      if (!specReadyForDev(target)) {
+        showToast('error', hasSubRequirements(target) ? t.backlogNeedsSubSpecs : t.backlogNeedsSpec);
         return;
       }
       if (!target.associatedRepoIds?.length) {

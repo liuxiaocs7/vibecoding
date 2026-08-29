@@ -10,7 +10,7 @@ interface KanbanBoardProps {
   gitRepos: GitRepo[];
   branchPrefixConfig?: BranchPrefixConfig;
   onSelectIssue: (issue: Issue) => void;
-  onStartAutoDev: (issueId: string) => void;
+  onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onMoveColumn: (issueId: string, newStatus: IssueStatus) => void;
   onOpenCreateIssue: () => void;
   lang?: Language;

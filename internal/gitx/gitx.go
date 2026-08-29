@@ -370,6 +370,11 @@ func CurrentBranch(dir string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+func HeadSHA(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "--short", "HEAD")
+	return strings.TrimSpace(out), err
+}
+
 func ListTrackedFiles(dir string, limit int) ([]string, error) {
 	out, err := run(dir, "ls-files")
 	if err != nil {

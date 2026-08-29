@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sort"
 	"strings"
 	"time"
 )
@@ -48,8 +49,8 @@ type ModelConfig struct {
 
 type BranchPrefixConfig struct {
 	FeaturePrefix  string `json:"featurePrefix"`
-	BugfixPrefix  string `json:"bugfixPrefix"`
-	HotfixPrefix  string `json:"hotfixPrefix"`
+	BugfixPrefix   string `json:"bugfixPrefix"`
+	HotfixPrefix   string `json:"hotfixPrefix"`
 	RefactorPrefix string `json:"refactorPrefix"`
 	AutoDevPrefix  string `json:"autoDevPrefix"`
 	ReleasePrefix  string `json:"releasePrefix"`
@@ -58,8 +59,8 @@ type BranchPrefixConfig struct {
 func DefaultBranchPrefix() BranchPrefixConfig {
 	return BranchPrefixConfig{
 		FeaturePrefix:  "feature/",
-		BugfixPrefix:  "fix/",
-		HotfixPrefix:  "hotfix/",
+		BugfixPrefix:   "fix/",
+		HotfixPrefix:   "hotfix/",
 		RefactorPrefix: "refactor/",
 		AutoDevPrefix:  "ai-dev/",
 		ReleasePrefix:  "release/",
@@ -97,15 +98,15 @@ func UpgradeLegacyOpenAIBaseURL(raw string) string {
 }
 
 type Project struct {
-	ID                  string              `json:"id"`
-	Name                string              `json:"name"`
-	Description         string              `json:"description"`
-	GitRepos           []GitRepo           `json:"gitRepos"`
-	BranchPrefixConfig  *BranchPrefixConfig `json:"branchPrefixConfig,omitempty"`
-	CustomModelConfig   *ModelConfig        `json:"customModelConfig,omitempty"`
-	UseCustomModelConfig bool               `json:"useCustomModelConfig"`
-	CreatedAt           string              `json:"createdAt"`
-	UpdatedAt           string              `json:"updatedAt"`
+	ID                   string              `json:"id"`
+	Name                 string              `json:"name"`
+	Description          string              `json:"description"`
+	GitRepos             []GitRepo           `json:"gitRepos"`
+	BranchPrefixConfig   *BranchPrefixConfig `json:"branchPrefixConfig,omitempty"`
+	CustomModelConfig    *ModelConfig        `json:"customModelConfig,omitempty"`
+	UseCustomModelConfig bool                `json:"useCustomModelConfig"`
+	CreatedAt            string              `json:"createdAt"`
+	UpdatedAt            string              `json:"updatedAt"`
 }
 
 type ChatMessage struct {
@@ -135,6 +136,30 @@ type DevSpec struct {
 	UpdatedAt           string           `json:"updatedAt"`
 }
 
+type SubRequirementStatus string
+
+const (
+	SubReqPending    SubRequirementStatus = "pending"
+	SubReqReady      SubRequirementStatus = "ready"
+	SubReqInProgress SubRequirementStatus = "in_progress"
+	SubReqDone       SubRequirementStatus = "done"
+	SubReqFailed     SubRequirementStatus = "failed"
+)
+
+// SubRequirement is a slice of a large issue, each with its own Dev Spec.
+type SubRequirement struct {
+	ID             string               `json:"id"`
+	Title          string               `json:"title"`
+	Description    string               `json:"description"`
+	Order          int                  `json:"order"`
+	Status         SubRequirementStatus `json:"status"`
+	DevSpec        *DevSpec             `json:"devSpec,omitempty"`
+	ChatMessages   []ChatMessage        `json:"chatMessages"`
+	AutoDevLogs    []AutoDevLog         `json:"autoDevLogs"`
+	CommitSHA      string               `json:"commitSha,omitempty"`
+	ReviewFeedback string               `json:"reviewFeedback,omitempty"`
+}
+
 type AutoDevLog struct {
 	ID        string `json:"id"`
 	Timestamp string `json:"timestamp"`
@@ -161,22 +186,122 @@ type PRInfo struct {
 }
 
 type Issue struct {
-	ID                string       `json:"id"`
-	ProjectID         string       `json:"projectId"`
-	Title             string       `json:"title"`
-	Description       string       `json:"description"`
-	Priority          Priority     `json:"priority"`
-	Status            IssueStatus  `json:"status"`
-	AssociatedRepoIDs []string     `json:"associatedRepoIds"`
-	Assignee          string       `json:"assignee"`
-	ChatMessages      []ChatMessage `json:"chatMessages"`
-	DevSpec           *DevSpec     `json:"devSpec,omitempty"`
-	AutoDevLogs       []AutoDevLog `json:"autoDevLogs"`
-	AutoDevProgress   int          `json:"autoDevProgress"`
-	PRInfo            *PRInfo      `json:"prInfo,omitempty"`
-	ReviewFeedback    string       `json:"reviewFeedback,omitempty"`
-	CreatedAt         string       `json:"createdAt"`
-	UpdatedAt         string       `json:"updatedAt"`
+	ID                string           `json:"id"`
+	ProjectID         string           `json:"projectId"`
+	Title             string           `json:"title"`
+	Description       string           `json:"description"`
+	Priority          Priority         `json:"priority"`
+	Status            IssueStatus      `json:"status"`
+	AssociatedRepoIDs []string         `json:"associatedRepoIds"`
+	Assignee          string           `json:"assignee"`
+	ChatMessages      []ChatMessage    `json:"chatMessages"`
+	DevSpec           *DevSpec         `json:"devSpec,omitempty"`
+	SubRequirements   []SubRequirement `json:"subRequirements,omitempty"`
+	CurrentSubID      string           `json:"currentSubId,omitempty"`
+	ReworkSubID       string           `json:"reworkSubId,omitempty"`
+	AutoDevLogs       []AutoDevLog     `json:"autoDevLogs"`
+	AutoDevProgress   int              `json:"autoDevProgress"`
+	PRInfo            *PRInfo          `json:"prInfo,omitempty"`
+	ReviewFeedback    string           `json:"reviewFeedback,omitempty"`
+	CreatedAt         string           `json:"createdAt"`
+	UpdatedAt         string           `json:"updatedAt"`
+}
+
+func (iss *Issue) HasSubRequirements() bool {
+	return iss != nil && len(iss.SubRequirements) > 0
+}
+
+// SpecReadyForDev reports whether Auto-Dev / backlog can proceed.
+// A split issue needs every sub-requirement to have a Markdown Dev Spec;
+// an unsplit issue needs the parent Dev Spec.
+func (iss *Issue) SpecReadyForDev() bool {
+	if iss == nil {
+		return false
+	}
+	if iss.HasSubRequirements() {
+		for _, sub := range iss.SubRequirements {
+			if sub.DevSpec == nil || strings.TrimSpace(sub.DevSpec.RawMarkdown) == "" {
+				return false
+			}
+		}
+		return true
+	}
+	return iss.DevSpec != nil && strings.TrimSpace(iss.DevSpec.RawMarkdown) != ""
+}
+
+func (iss *Issue) NormalizeSubs() {
+	if iss == nil {
+		return
+	}
+	if iss.SubRequirements == nil {
+		iss.SubRequirements = []SubRequirement{}
+		return
+	}
+	for i := range iss.SubRequirements {
+		if iss.SubRequirements[i].ChatMessages == nil {
+			iss.SubRequirements[i].ChatMessages = []ChatMessage{}
+		}
+		if iss.SubRequirements[i].AutoDevLogs == nil {
+			iss.SubRequirements[i].AutoDevLogs = []AutoDevLog{}
+		}
+		if iss.SubRequirements[i].Order == 0 {
+			iss.SubRequirements[i].Order = i + 1
+		}
+		if iss.SubRequirements[i].Status == "" {
+			if iss.SubRequirements[i].DevSpec != nil && strings.TrimSpace(iss.SubRequirements[i].DevSpec.RawMarkdown) != "" {
+				iss.SubRequirements[i].Status = SubReqReady
+			} else {
+				iss.SubRequirements[i].Status = SubReqPending
+			}
+		}
+	}
+	sort.SliceStable(iss.SubRequirements, func(i, j int) bool {
+		return iss.SubRequirements[i].Order < iss.SubRequirements[j].Order
+	})
+}
+
+func (iss *Issue) SubByID(id string) *SubRequirement {
+	if iss == nil || id == "" {
+		return nil
+	}
+	for i := range iss.SubRequirements {
+		if iss.SubRequirements[i].ID == id {
+			return &iss.SubRequirements[i]
+		}
+	}
+	return nil
+}
+
+func (iss *Issue) AggregatedFileChanges() []SpecFileChange {
+	if iss == nil {
+		return nil
+	}
+	if !iss.HasSubRequirements() {
+		if iss.DevSpec == nil {
+			return nil
+		}
+		return iss.DevSpec.FileChanges
+	}
+	var out []SpecFileChange
+	for _, sub := range iss.SubRequirements {
+		if sub.DevSpec != nil {
+			out = append(out, sub.DevSpec.FileChanges...)
+		}
+	}
+	return out
+}
+
+func (iss *Issue) ReadySubCount() (ready, total int) {
+	if iss == nil {
+		return 0, 0
+	}
+	total = len(iss.SubRequirements)
+	for _, sub := range iss.SubRequirements {
+		if sub.DevSpec != nil && strings.TrimSpace(sub.DevSpec.RawMarkdown) != "" {
+			ready++
+		}
+	}
+	return ready, total
 }
 
 type UIPrefs struct {
@@ -188,11 +313,11 @@ type UIPrefs struct {
 type AutoDevJobStatus string
 
 const (
-	JobQueued     AutoDevJobStatus = "queued"
-	JobRunning    AutoDevJobStatus = "running"
-	JobCompleted  AutoDevJobStatus = "completed"
-	JobFailed     AutoDevJobStatus = "failed"
-	JobCancelled  AutoDevJobStatus = "cancelled"
+	JobQueued    AutoDevJobStatus = "queued"
+	JobRunning   AutoDevJobStatus = "running"
+	JobCompleted AutoDevJobStatus = "completed"
+	JobFailed    AutoDevJobStatus = "failed"
+	JobCancelled AutoDevJobStatus = "cancelled"
 )
 
 type AutoDevJob struct {
@@ -208,15 +333,19 @@ type AutoDevJob struct {
 }
 
 type JobEvent struct {
-	Type     string `json:"type"` // log | progress | status | done | error
-	Phase    string `json:"phase,omitempty"`
-	Message  string `json:"message,omitempty"`
-	Details  string `json:"details,omitempty"`
-	Progress int    `json:"progress,omitempty"`
-	Status   string `json:"status,omitempty"`
-	Log      *AutoDevLog `json:"log,omitempty"`
-	PRInfo   *PRInfo `json:"prInfo,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Type             string      `json:"type"` // log | progress | status | done | error
+	Phase            string      `json:"phase,omitempty"`
+	Message          string      `json:"message,omitempty"`
+	Details          string      `json:"details,omitempty"`
+	Progress         int         `json:"progress,omitempty"`
+	Status           string      `json:"status,omitempty"`
+	Log              *AutoDevLog `json:"log,omitempty"`
+	PRInfo           *PRInfo     `json:"prInfo,omitempty"`
+	Error            string      `json:"error,omitempty"`
+	SubRequirementID string      `json:"subRequirementId,omitempty"`
+	SubTitle         string      `json:"subTitle,omitempty"`
+	SubIndex         int         `json:"subIndex,omitempty"`
+	SubTotal         int         `json:"subTotal,omitempty"`
 }
 
 func NowISO() string {

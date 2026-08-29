@@ -315,6 +315,7 @@ func (s *Store) ListIssues(projectID string) ([]model.Issue, error) {
 		if iss.AssociatedRepoIDs == nil {
 			iss.AssociatedRepoIDs = []string{}
 		}
+		iss.NormalizeSubs()
 		out = append(out, iss)
 	}
 	if out == nil {
@@ -345,6 +346,7 @@ func (s *Store) GetIssue(id string) (*model.Issue, error) {
 	if iss.AssociatedRepoIDs == nil {
 		iss.AssociatedRepoIDs = []string{}
 	}
+	iss.NormalizeSubs()
 	return &iss, nil
 }
 
@@ -366,6 +368,7 @@ func (s *Store) UpsertIssue(iss model.Issue) error {
 	if iss.AssociatedRepoIDs == nil {
 		iss.AssociatedRepoIDs = []string{}
 	}
+	iss.NormalizeSubs()
 	b, err := json.Marshal(iss)
 	if err != nil {
 		return err

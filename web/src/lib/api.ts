@@ -16,6 +16,66 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return data as T;
 }
 
+type SpecStreamBody = {
+  prompt?: string;
+  messages?: unknown[];
+  subRequirementId?: string;
+  scope?: 'all' | 'sub';
+};
+
+type SpecStreamResult = {
+  spec: DevSpec;
+  text: string;
+  chatReply?: string;
+  process?: string;
+  subRequirements?: Issue['subRequirements'];
+};
+
+async function streamSpec(
+  url: string,
+  body: SpecStreamBody,
+  opts?: { signal?: AbortSignal; onDelta?: (chunk: string) => void; onStatus?: (msg: string) => void }
+): Promise<SpecStreamResult> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'text/event-stream',
+    },
+    body: JSON.stringify(body),
+    signal: opts?.signal,
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  }
+
+  let result: SpecStreamResult | null = null;
+  let streamError: string | null = null;
+
+  await readSSE(res, (ev) => {
+    if (ev.type === 'delta' && ev.text) {
+      opts?.onDelta?.(ev.text);
+    } else if (ev.type === 'status' && ev.message) {
+      opts?.onStatus?.(ev.message);
+    } else if (ev.type === 'error') {
+      streamError = ev.error || 'stream error';
+    } else if (ev.type === 'done') {
+      result = {
+        spec: ev.spec as DevSpec,
+        text: (ev.chatReply || ev.text || '') as string,
+        chatReply: (ev.chatReply || ev.text || '') as string,
+        process: (ev.process || '') as string,
+        subRequirements: (ev.subRequirements as Issue['subRequirements']) || undefined,
+      };
+    }
+  });
+
+  if (streamError) throw new Error(streamError);
+  if (!result) throw new Error('Stream ended without result');
+  return result;
+}
+
 export interface UIPrefs {
   language: string;
   themeStyle: string;
@@ -50,6 +110,10 @@ export interface JobEvent {
   log?: AutoDevLog;
   prInfo?: PRInfo;
   error?: string;
+  subRequirementId?: string;
+  subTitle?: string;
+  subIndex?: number;
+  subTotal?: number;
 }
 
 export const api = {
@@ -94,64 +158,35 @@ export const api = {
       error?: string;
     }>('/api/repos/validate', { method: 'POST', body: JSON.stringify({ path }) }),
 
-  generateSpec: (issueId: string, body: { prompt?: string; messages?: unknown[] }) =>
-    request<{ spec: DevSpec; text: string; chatReply?: string; process?: string }>(
-      `/api/issues/${issueId}/spec`,
-      {
-        method: 'POST',
-        body: JSON.stringify(body),
-      }
-    ),
+  generateSpec: (issueId: string, body: SpecStreamBody) =>
+    request<SpecStreamResult>(`/api/issues/${issueId}/spec`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
 
   /** Stream Dev Spec generation; onDelta receives raw model text as it arrives. */
-  generateSpecStream: async (
+  generateSpecStream: (
     issueId: string,
-    body: { prompt?: string; messages?: unknown[] },
+    body: SpecStreamBody,
     opts?: { signal?: AbortSignal; onDelta?: (chunk: string) => void; onStatus?: (msg: string) => void }
-  ): Promise<{ spec: DevSpec; text: string; chatReply?: string; process?: string }> => {
-    const res = await fetch(`/api/issues/${issueId}/spec?stream=1`, {
+  ) => streamSpec(`/api/issues/${issueId}/spec?stream=1`, body, opts),
+
+  splitIssueStream: (
+    issueId: string,
+    body: SpecStreamBody,
+    opts?: { signal?: AbortSignal; onDelta?: (chunk: string) => void; onStatus?: (msg: string) => void }
+  ) => streamSpec(`/api/issues/${issueId}/split?stream=1`, body, opts),
+
+  exportFile: (filename: string, contents: string) =>
+    request<{ path: string }>('/api/export-file', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'text/event-stream',
-      },
-      body: JSON.stringify(body),
-      signal: opts?.signal,
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
-    }
+      body: JSON.stringify({ filename, contents }),
+    }),
 
-    let result: { spec: DevSpec; text: string; chatReply?: string; process?: string } | null = null;
-    let streamError: string | null = null;
-
-    await readSSE(res, (ev) => {
-      if (ev.type === 'delta' && ev.text) {
-        opts?.onDelta?.(ev.text);
-      } else if (ev.type === 'status' && ev.message) {
-        opts?.onStatus?.(ev.message);
-      } else if (ev.type === 'error') {
-        streamError = ev.error || 'stream error';
-      } else if (ev.type === 'done') {
-        result = {
-          spec: ev.spec as DevSpec,
-          text: (ev.chatReply || ev.text || '') as string,
-          chatReply: (ev.chatReply || ev.text || '') as string,
-          process: (ev.process || '') as string,
-        };
-      }
-    });
-
-    if (streamError) throw new Error(streamError);
-    if (!result) throw new Error('Stream ended without result');
-    return result;
-  },
-
-  startAutoDev: (issueId: string) =>
+  startAutoDev: (issueId: string, subRequirementId?: string) =>
     request<AutoDevJob>('/api/auto-dev/start', {
       method: 'POST',
-      body: JSON.stringify({ issueId }),
+      body: JSON.stringify({ issueId, subRequirementId: subRequirementId || undefined }),
     }),
 
   cancelAutoDev: (jobId: string) =>

@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Issue, GitRepo, ModelConfig, ChatMessage, BranchPrefixConfig } from '../types';
+import { Issue, GitRepo, ModelConfig, ChatMessage, BranchPrefixConfig, SubRequirement } from '../types';
 import { Language, getTranslation, ThemeStyle } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { sendLLMChat } from '../lib/llm';
 import { api } from '../lib/api';
 import { MarkdownView } from '../lib/markdown';
+import { aggregatedFileChanges, hasSubRequirements, specMarkdownForExport, specReadyForDev, visibleSpec } from '../lib/subreq';
+import { saveTextFile } from '../lib/savefile';
+import { SubRequirementBar } from './SubRequirementBar';
 import {
   X,
   MessageSquare,
@@ -33,6 +36,7 @@ import {
   ChevronUp,
   Eye,
   Download,
+  Layers,
 } from 'lucide-react';
 
 interface IssueDetailModalProps {
@@ -43,7 +47,7 @@ interface IssueDetailModalProps {
   modelConfig: ModelConfig;
   branchPrefixConfig?: BranchPrefixConfig;
   onUpdateIssue: (updatedIssue: Issue) => void;
-  onStartAutoDev: (issueId: string) => void;
+  onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onCancelAutoDev?: (issueId: string) => void;
   onDeleteIssue?: (issueId: string) => void;
   projectId?: string;
@@ -80,6 +84,10 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   const [showReworkBox, setShowReworkBox] = useState(false);
   const [chatError, setChatError] = useState('');
   const [editingRepos, setEditingRepos] = useState(false);
+  const [selectedScope, setSelectedScope] = useState<string>('all');
+  const [reworkScope, setReworkScope] = useState<string>('all');
+  const [exporting, setExporting] = useState(false);
+  const [exportHint, setExportHint] = useState('');
   /** Ephemeral model process traces — session only, never persisted. */
   const [modelProcess, setModelProcess] = useState<{
     entries: { id: string; at: string; prompt: string; body: string; status: 'running' | 'done' | 'error' }[];
@@ -88,12 +96,22 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   const abortRef = useRef<AbortController | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const splitIssue = hasSubRequirements(issue);
+  const activeSub: SubRequirement | undefined =
+    splitIssue && selectedScope !== 'all'
+      ? (issue.subRequirements || []).find((s) => s.id === selectedScope)
+      : undefined;
+  const visibleMessages = activeSub ? activeSub.chatMessages || [] : issue.chatMessages;
+  const currentSpec = visibleSpec(issue, selectedScope);
 
   // Automatically switch active tab based on Issue status when modal opens
   useEffect(() => {
     if (!isOpen) return;
     setEditingRepos(false);
     setModelProcess({ entries: [], expanded: false });
+    setSelectedScope('all');
+    setReworkScope('all');
+    setExportHint('');
     if (issue.status === 'requirements') {
       setActiveTab('chat');
     } else if (issue.status === 'backlog') {
@@ -106,14 +124,15 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   }, [isOpen, issue.id, issue.status]);
 
   useEffect(() => {
-    if (issue.devSpec?.rawMarkdown) {
-      setSpecMarkdown(issue.devSpec.rawMarkdown);
+    const spec = visibleSpec(issue, selectedScope);
+    if (spec?.rawMarkdown) {
+      setSpecMarkdown(spec.rawMarkdown);
     }
-  }, [issue.devSpec]);
+  }, [issue.devSpec, issue.subRequirements, selectedScope]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [issue.chatMessages, activeTab]);
+  }, [visibleMessages, activeTab]);
 
   if (!isOpen) return null;
 
@@ -140,10 +159,17 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
 
   const handleSendMessage = async (
     customPrompt?: string,
-    opts?: { forceSpecSync?: boolean }
+    opts?: { forceSpecSync?: boolean; split?: boolean; scope?: string }
   ) => {
     const promptToUse = customPrompt || inputPrompt;
     if (!promptToUse.trim()) return;
+
+    const scope = opts?.scope || selectedScope;
+    const targetingSub = splitIssue && scope !== 'all';
+    const targetSub = targetingSub
+      ? (issue.subRequirements || []).find((s) => s.id === scope)
+      : undefined;
+    const priorMessages = targetSub ? targetSub.chatMessages || [] : issue.chatMessages;
 
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
@@ -152,8 +178,15 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
 
-    const updatedMessages = [...issue.chatMessages, userMsg];
-    const tempIssue = { ...issue, chatMessages: updatedMessages };
+    const updatedMessages = [...priorMessages, userMsg];
+    const tempIssue = targetSub
+      ? {
+          ...issue,
+          subRequirements: (issue.subRequirements || []).map((s) =>
+            s.id === targetSub.id ? { ...s, chatMessages: updatedMessages } : s
+          ),
+        }
+      : { ...issue, chatMessages: updatedMessages };
     onUpdateIssue(tempIssue);
     setInputPrompt('');
     setIsSending(true);
@@ -162,9 +195,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     const ac = new AbortController();
     abortRef.current = ac;
 
-    // Requirements / backlog chat always revises the Markdown Dev Spec directly.
     const syncSpec =
       opts?.forceSpecSync ||
+      opts?.split ||
       issue.status === 'requirements' ||
       issue.status === 'backlog';
 
@@ -199,24 +232,42 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
       patchProcess(streamed, 'running');
     };
 
+    const mergeChat = (base: Issue, messages: ChatMessage[]): Issue => {
+      if (targetSub) {
+        return {
+          ...base,
+          subRequirements: (base.subRequirements || []).map((s) =>
+            s.id === targetSub.id ? { ...s, chatMessages: messages } : s
+          ),
+        };
+      }
+      return { ...base, chatMessages: messages };
+    };
+
     try {
       if (syncSpec) {
-        const { spec, text, chatReply, process } = await api.generateSpecStream(
-          issue.id,
-          {
-            prompt: promptToUse,
-            messages: updatedMessages,
+        const streamOpts = {
+          signal: ac.signal,
+          onDelta: appendDelta,
+          onStatus: () => {
+            if (!streamed) {
+              patchProcess(lang === 'zh' ? '正在请求模型…' : 'Calling model…', 'running');
+            }
           },
-          {
-            signal: ac.signal,
-            onDelta: appendDelta,
-            onStatus: () => {
-              if (!streamed) {
-                patchProcess(lang === 'zh' ? '正在请求模型…' : 'Calling model…', 'running');
-              }
-            },
-          }
-        );
+        };
+        const result = opts?.split
+          ? await api.splitIssueStream(issue.id, { prompt: promptToUse, messages: updatedMessages }, streamOpts)
+          : await api.generateSpecStream(
+              issue.id,
+              {
+                prompt: promptToUse,
+                messages: updatedMessages,
+                scope: targetingSub ? 'sub' : splitIssue ? 'all' : undefined,
+                subRequirementId: targetingSub ? scope : undefined,
+              },
+              streamOpts
+            );
+        const { spec, text, chatReply, process, subRequirements } = result;
         const reply =
           chatReply ||
           text ||
@@ -228,13 +279,15 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           text: reply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
+        const nextSubs = subRequirements || tempIssue.subRequirements;
         onUpdateIssue({
-          ...tempIssue,
-          chatMessages: [...updatedMessages, aiMsg],
-          devSpec: spec,
+          ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
+          devSpec: spec || tempIssue.devSpec,
+          subRequirements: nextSubs,
           updatedAt: new Date().toISOString(),
         });
-        setSpecMarkdown(spec.rawMarkdown || '');
+        if (spec?.rawMarkdown) setSpecMarkdown(spec.rawMarkdown);
+        if (opts?.split) setSelectedScope('all');
       } else {
         const responseText = await sendLLMChat({
           prompt: promptToUse,
@@ -262,8 +315,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
         onUpdateIssue({
-          ...tempIssue,
-          chatMessages: [...updatedMessages, aiMsg],
+          ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
           updatedAt: new Date().toISOString(),
         });
       }
@@ -280,10 +332,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           text: `⚠️ ${t.llmError}: ${err.message}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         };
-        onUpdateIssue({
-          ...tempIssue,
-          chatMessages: [...updatedMessages, errMsg],
-        });
+        onUpdateIssue(mergeChat(tempIssue, [...updatedMessages, errMsg]));
       }
     } finally {
       setIsSending(false);
@@ -292,25 +341,41 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
 
   const handleReworkSubmit = async () => {
     if (!reworkFeedback.trim()) {
-      setChatError('请输入评审修改意见');
+      setChatError(lang === 'zh' ? '请输入评审修改意见' : 'Enter review feedback');
       return;
     }
 
     setShowReworkBox(false);
     setActiveTab('chat');
+    const scope = reworkScope;
+    setSelectedScope(scope);
 
-    const prompt = `开发者在评审中指出了以下问题，需要二次修改代码与开发文档:\n"${reworkFeedback}"\n请重新分析并更新开发文档 (Dev Spec)。`;
+    const targetLabel =
+      scope === 'all'
+        ? lang === 'zh'
+          ? '整单需求'
+          : 'whole requirement'
+        : (issue.subRequirements || []).find((s) => s.id === scope)?.title || scope;
+
+    const prompt =
+      lang === 'zh'
+        ? `开发者在评审中指出了以下问题，需要二次修改代码与开发文档（范围: ${targetLabel}）:\n"${reworkFeedback}"\n请重新分析并更新对应待开发文档。`
+        : `Reviewer requested rework for ${targetLabel}:\n"${reworkFeedback}"\nPlease revise the Dev Spec(s) accordingly.`;
 
     const updatedIssue: Issue = {
       ...issue,
       reviewFeedback: reworkFeedback,
+      reworkSubId: scope === 'all' ? '' : scope,
       autoDevLogs: [
         ...issue.autoDevLogs,
         {
           id: `rework-${Date.now()}`,
           timestamp: new Date().toLocaleTimeString(),
           phase: 'analyzing',
-          message: `收到开发者二次评审意见: "${reworkFeedback}". 正在更新 Dev Spec...`,
+          message:
+            lang === 'zh'
+              ? `收到二次评审意见（${targetLabel}）: "${reworkFeedback}". 正在更新 Dev Spec...`
+              : `Rework feedback (${targetLabel}): "${reworkFeedback}". Updating Dev Spec...`,
         },
       ],
     };
@@ -319,9 +384,8 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     const feedback = reworkFeedback;
     setReworkFeedback('');
 
-    await handleSendMessage(prompt, { forceSpecSync: true });
-    // Start Auto-Dev only after Spec regeneration completes (awaited above).
-    onStartAutoDev(issue.id);
+    await handleSendMessage(prompt, { forceSpecSync: true, scope });
+    onStartAutoDev(issue.id, scope === 'all' ? undefined : scope);
     void feedback;
   };
 
@@ -334,34 +398,37 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     }
   };
 
-  const handleExportDevSpec = () => {
-    const md =
-      (editingSpec ? specMarkdown : issue.devSpec?.rawMarkdown) ||
-      issue.devSpec?.summary ||
-      '';
-    if (!md.trim()) {
-      setChatError(lang === 'zh' ? '暂无开发文档可导出' : 'No Dev Spec to export');
+  const handleExportDevSpec = async () => {
+    const { filename, markdown } = specMarkdownForExport(
+      issue,
+      selectedScope,
+      editingSpec ? specMarkdown : undefined
+    );
+    if (!markdown.trim()) {
+      setChatError(t.noSpecToExport);
+      setExportHint('');
       return;
     }
-    const base =
-      issue.devSpec?.title ||
-      issue.title ||
-      `dev-spec-${issue.id}`;
-    const safeName = base
-      .replace(/[\\/:*?"<>|]+/g, '-')
-      .replace(/\s+/g, '-')
-      .replace(/-+/g, '-')
-      .slice(0, 80)
-      .replace(/^-|-$/g, '') || `dev-spec-${issue.id}`;
-    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${safeName}.md`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    setChatError('');
+    setExportHint('');
+    setExporting(true);
+    try {
+      const result = await saveTextFile(filename, markdown);
+      if (result.status === 'cancelled') {
+        return;
+      }
+      if (result.status === 'copied') {
+        setExportHint(t.exportCopied);
+        return;
+      }
+      setExportHint(
+        result.path ? t.exportSavedTo.replace('{path}', result.path) : t.exportSaved
+      );
+    } catch (err: any) {
+      setChatError(err?.message || t.exportFailed);
+    } finally {
+      setExporting(false);
+    }
   };
 
   return (
@@ -403,7 +470,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
-            {issue.status === 'backlog' && issue.devSpec && (
+            {issue.status === 'backlog' && specReadyForDev(issue) && (
               <button
                 onClick={() => {
                   onStartAutoDev(issue.id);
@@ -523,6 +590,23 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
             <div className="flex items-center gap-2 shrink-0">
               <button
                 onClick={() => {
+                  if (splitIssue && !window.confirm(t.splitSubsConfirm)) return;
+                  setActiveTab('chat');
+                  handleSendMessage(
+                    lang === 'zh'
+                      ? '请将当前需求拆分成若干可独立实施的子需求，每个子需求一份完整待开发文档，按实施顺序排列。'
+                      : 'Split this requirement into ordered, independently implementable sub-requirements. Each must have a complete Dev Spec.',
+                    { split: true }
+                  );
+                }}
+                className="px-2.5 py-1 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/40 rounded-lg text-indigo-800 dark:text-indigo-200 font-semibold text-[11px] flex items-center gap-1 transition-all"
+                title={t.splitSubsHint}
+              >
+                <Layers className="w-3 h-3 text-indigo-500" />
+                {t.splitSubsBtn}
+              </button>
+              <button
+                onClick={() => {
                   setActiveTab('chat');
                   handleSendMessage(
                     lang === 'zh'
@@ -535,7 +619,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                 <Sparkles className="w-3 h-3 text-cyan-500" />
                 {t.extractSpecBtn}
               </button>
-              {issue.devSpec?.rawMarkdown && associatedRepos.length > 0 && (
+              {specReadyForDev(issue) && associatedRepos.length > 0 && (
                 <button
                   onClick={() =>
                     onUpdateIssue({
@@ -657,7 +741,8 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
             <MessageSquare className="w-4 h-4" />
             {t.tabChat}
             <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono border ${themeConfig.inputBg} ${themeConfig.textMuted} ${themeConfig.inputBorder}`}>
-              {issue.chatMessages.length}
+              {issue.chatMessages.length +
+                (issue.subRequirements || []).reduce((n, s) => n + (s.chatMessages?.length || 0), 0)}
             </span>
             {issue.status === 'requirements' && (
               <span className="px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 text-[9px] border border-cyan-500/40 font-bold">
@@ -676,7 +761,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           >
             <FileText className="w-4 h-4" />
             {t.tabSpec}
-            {issue.devSpec && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
+            {(issue.devSpec || splitIssue) && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
             {issue.status === 'backlog' && (
               <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[9px] border border-amber-500/40 font-bold">
                 {lang === 'zh' ? '确认规范' : 'Focus'}
@@ -731,7 +816,16 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           {activeTab === 'chat' && (
             <div className="flex-1 flex flex-col h-full overflow-hidden">
               <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                {issue.chatMessages.map((msg) => (
+                {splitIssue && (
+                  <SubRequirementBar
+                    issue={issue}
+                    selectedScope={selectedScope}
+                    onSelect={setSelectedScope}
+                    lang={lang}
+                    themeStyle={themeStyle}
+                  />
+                )}
+                {visibleMessages.map((msg) => (
                   <div
                     key={msg.id}
                     className={`flex items-start gap-3 ${
@@ -872,7 +966,13 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               <div className={`p-4 border-t space-y-3 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
                 <div className="flex items-center gap-2 overflow-x-auto pb-1 text-[11px]">
                   <span className={`text-[10px] uppercase font-semibold shrink-0 ${themeConfig.textMuted}`}>
-                    {lang === 'zh' ? '对话将直接更新待开发文档' : 'Chat updates the Dev Spec directly'}
+                    {splitIssue
+                      ? selectedScope === 'all'
+                        ? t.chatUpdatesAll
+                        : t.chatUpdatesSub
+                      : lang === 'zh'
+                      ? '对话将直接更新待开发文档'
+                      : 'Chat updates the Dev Spec directly'}
                   </span>
                   <button
                     onClick={() =>
@@ -908,7 +1008,15 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                     onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
                     placeholder={
                       lang === 'zh'
-                        ? '描述需求或修改意见，发送后自动更新待开发文档...'
+                        ? splitIssue && selectedScope !== 'all'
+                          ? '描述该子需求的修改意见，发送后更新对应文档...'
+                          : splitIssue
+                          ? '全局描述修改意见，发送后同步更新所有子需求文档...'
+                          : '描述需求或修改意见，发送后自动更新待开发文档...'
+                        : splitIssue && selectedScope !== 'all'
+                        ? 'Describe this sub-requirement — its Dev Spec updates on send...'
+                        : splitIssue
+                        ? 'Global instruction — every sub-requirement spec updates on send...'
                         : 'Describe requirements or changes — Dev Spec updates on send...'
                     }
                     className={`flex-1 px-4 py-2.5 border rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
@@ -929,7 +1037,19 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           {/* TAB 2: Development Spec Document (Markdown) */}
           {activeTab === 'spec' && (
             <div className="flex-1 p-6 overflow-y-auto space-y-4">
-              {!issue.devSpec?.rawMarkdown && !issue.devSpec?.summary ? (
+              {splitIssue && (
+                <SubRequirementBar
+                  issue={issue}
+                  selectedScope={selectedScope}
+                  onSelect={(scope) => {
+                    setSelectedScope(scope);
+                    setEditingSpec(false);
+                  }}
+                  lang={lang}
+                  themeStyle={themeStyle}
+                />
+              )}
+              {!currentSpec?.rawMarkdown && !currentSpec?.summary ? (
                 <div className={`p-12 text-center border-2 border-dashed rounded-2xl ${themeConfig.subtleBorder} ${themeConfig.cardBg}`}>
                   <FileText className={`w-12 h-12 mx-auto mb-3 ${themeConfig.textMuted}`} />
                   <h3 className={`text-base font-semibold ${themeConfig.textPrimary}`}>暂未生成待开发文档 (Dev Spec)</h3>
@@ -953,29 +1073,49 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                 </div>
               ) : (
                 <div className="space-y-4 h-full flex flex-col min-h-0">
-                  <div className={`flex items-center justify-between pb-3 border-b shrink-0 ${themeConfig.subtleBorder}`}>
+                  <div className={`pb-3 border-b shrink-0 space-y-2 ${themeConfig.subtleBorder}`}>
+                    <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <h3 className={`text-base font-bold truncate ${themeConfig.textPrimary}`}>
-                        {issue.devSpec?.title || (lang === 'zh' ? '待开发文档' : 'Dev Spec')}
+                        {currentSpec?.title ||
+                          activeSub?.title ||
+                          (selectedScope === 'all' && splitIssue
+                            ? lang === 'zh'
+                              ? '总览文档'
+                              : 'Overview'
+                            : lang === 'zh'
+                            ? '待开发文档'
+                            : 'Dev Spec')}
                       </h3>
                       <p className={`text-[11px] mt-0.5 ${themeConfig.textMuted}`}>
                         Markdown · {lang === 'zh' ? '更新' : 'Updated'}{' '}
-                        {issue.devSpec?.updatedAt ? new Date(issue.devSpec.updatedAt).toLocaleString() : '—'}
+                        {currentSpec?.updatedAt ? new Date(currentSpec.updatedAt).toLocaleString() : '—'}
                       </p>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <button
                         type="button"
                         onClick={handleExportDevSpec}
-                        className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+                        disabled={exporting}
+                        className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
                         title={lang === 'zh' ? '导出 Markdown 文件' : 'Export Markdown file'}
                       >
-                        <Download className="w-3.5 h-3.5 text-emerald-500" />
-                        {lang === 'zh' ? '导出下载' : 'Export'}
+                        {exporting ? (
+                          <Loader2 className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
+                        ) : (
+                          <Download className="w-3.5 h-3.5 text-emerald-500" />
+                        )}
+                        {exporting
+                          ? lang === 'zh'
+                            ? '保存中…'
+                            : 'Saving…'
+                          : lang === 'zh'
+                          ? '导出下载'
+                          : 'Export'}
                       </button>
                       <button
                         onClick={() => {
-                          if (!editingSpec) setSpecMarkdown(issue.devSpec?.rawMarkdown || '');
+                          if (!editingSpec) setSpecMarkdown(currentSpec?.rawMarkdown || '');
                           setEditingSpec(!editingSpec);
                         }}
                         className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
@@ -990,6 +1130,15 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                           : 'Edit Markdown'}
                       </button>
                     </div>
+                    </div>
+                    {exportHint && (
+                      <div className="text-[11px] text-emerald-600 dark:text-emerald-400 select-text break-all">
+                        {exportHint}
+                      </div>
+                    )}
+                    {chatError && (
+                      <div className="text-[11px] text-rose-500 select-text">{chatError}</div>
+                    )}
                   </div>
 
                   {editingSpec ? (
@@ -1003,7 +1152,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                       <div className="flex justify-end gap-2 shrink-0">
                         <button
                           onClick={() => {
-                            setSpecMarkdown(issue.devSpec?.rawMarkdown || '');
+                            setSpecMarkdown(currentSpec?.rawMarkdown || '');
                             setEditingSpec(false);
                           }}
                           className={`px-3 py-1.5 text-xs rounded-lg border ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
@@ -1014,19 +1163,29 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                           onClick={() => {
                             const md = specMarkdown;
                             const titleMatch = md.match(/^#\s+(.+)$/m);
-                            onUpdateIssue({
-                              ...issue,
-                              devSpec: {
-                                title: titleMatch?.[1]?.trim() || issue.devSpec?.title || issue.title,
-                                summary: issue.devSpec?.summary || '',
-                                architectureDesign: issue.devSpec?.architectureDesign || '',
-                                fileChanges: issue.devSpec?.fileChanges || [],
-                                implementationSteps: issue.devSpec?.implementationSteps || [],
-                                testCases: issue.devSpec?.testCases || [],
-                                rawMarkdown: md,
-                                updatedAt: new Date().toISOString(),
-                              },
-                            });
+                            const nextSpec = {
+                              title: titleMatch?.[1]?.trim() || currentSpec?.title || activeSub?.title || issue.title,
+                              summary: currentSpec?.summary || '',
+                              architectureDesign: currentSpec?.architectureDesign || '',
+                              fileChanges: currentSpec?.fileChanges || [],
+                              implementationSteps: currentSpec?.implementationSteps || [],
+                              testCases: currentSpec?.testCases || [],
+                              rawMarkdown: md,
+                              updatedAt: new Date().toISOString(),
+                            };
+                            if (activeSub) {
+                              onUpdateIssue({
+                                ...issue,
+                                subRequirements: (issue.subRequirements || []).map((s) =>
+                                  s.id === activeSub.id ? { ...s, title: nextSpec.title, devSpec: nextSpec } : s
+                                ),
+                              });
+                            } else {
+                              onUpdateIssue({
+                                ...issue,
+                                devSpec: nextSpec,
+                              });
+                            }
                             setEditingSpec(false);
                           }}
                           className="px-4 py-1.5 bg-indigo-600 text-xs text-white font-semibold rounded-lg"
@@ -1037,7 +1196,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                     </div>
                   ) : (
                     <div className={`flex-1 p-5 rounded-xl border overflow-y-auto ${themeConfig.cardBg} ${themeConfig.cardBorder} ${themeConfig.textPrimary}`}>
-                      <MarkdownView text={issue.devSpec?.rawMarkdown || issue.devSpec?.summary || ''} />
+                      <MarkdownView text={currentSpec?.rawMarkdown || currentSpec?.summary || ''} />
                     </div>
                   )}
                 </div>
@@ -1055,7 +1214,11 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                     {t.vibeBotConsoleTitle}
                   </div>
                   <div className={`text-[11px] mt-0.5 ${themeConfig.textMuted}`}>
-                    根据待开发文档自动切换分支，编写补丁，运行 Jest/Vitest 测试并创建 PR
+                    {splitIssue
+                      ? t.sequentialDev
+                      : lang === 'zh'
+                      ? '根据待开发文档自动切换分支，编写补丁，运行测试并创建 PR'
+                      : 'Branch, patch, test, and open a local review from the Dev Spec'}
                   </div>
                 </div>
 
@@ -1078,6 +1241,19 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                   )}
                 </div>
               </div>
+
+              {splitIssue && (
+                <div className={`px-3 py-2 rounded-xl border ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
+                  <SubRequirementBar
+                    issue={issue}
+                    selectedScope={issue.currentSubId || selectedScope}
+                    onSelect={setSelectedScope}
+                    lang={lang}
+                    themeStyle={themeStyle}
+                    compact
+                  />
+                </div>
+              )}
 
               <div className={`w-full h-2 rounded-full overflow-hidden border ${themeConfig.inputBg} ${themeConfig.inputBorder}`}>
                 <div
@@ -1156,6 +1332,19 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                   <p className={`text-xs mt-1 ${themeConfig.textMuted}`}>
                     目标分支: <code className="text-indigo-600 dark:text-indigo-300 font-mono">{issue.prInfo?.branchName || `feature/issue-${issue.id}`}</code> | 提交者: {issue.prInfo?.author || 'AI Auto-Dev Agent'}
                   </p>
+                  {splitIssue && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {(issue.subRequirements || []).map((sub) => (
+                        <span
+                          key={sub.id}
+                          className={`px-2 py-0.5 rounded-md text-[10px] border ${themeConfig.inputBorder} ${themeConfig.textSecondary}`}
+                        >
+                          {sub.order}. {sub.title}
+                          {sub.commitSha ? ` · ${sub.commitSha}` : ` · ${sub.status}`}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {issue.status === 'in_review' && (
@@ -1242,8 +1431,25 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                 <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-3">
                   <div className="text-xs font-bold text-amber-800 dark:text-amber-200 flex items-center gap-2">
                     <AlertTriangle className="w-4 h-4 text-amber-500" />
-                    开发者二次修改意见反馈
+                    {lang === 'zh' ? '开发者二次修改意见反馈' : 'Rework feedback'}
                   </div>
+                  {splitIssue && (
+                    <label className="block text-[11px] space-y-1">
+                      <span className={themeConfig.textMuted}>{t.reworkScope}</span>
+                      <select
+                        value={reworkScope}
+                        onChange={(e) => setReworkScope(e.target.value)}
+                        className={`w-full p-2 border rounded-lg text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      >
+                        <option value="all">{t.reworkAll}</option>
+                        {(issue.subRequirements || []).map((sub) => (
+                          <option key={sub.id} value={sub.id}>
+                            {sub.order}. {sub.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   <textarea
                     rows={3}
                     value={reworkFeedback}
@@ -1262,7 +1468,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                       onClick={handleReworkSubmit}
                       className="px-4 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs rounded-lg shadow"
                     >
-                      更新 Spec 并重新发起自动编码
+                      {t.reworkThenDev}
                     </button>
                   </div>
                 </div>
@@ -1275,13 +1481,13 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
                   变更文件 Diff 详情对比 (File Code Diff)
                 </h4>
 
-                {(!issue.devSpec?.fileChanges || issue.devSpec.fileChanges.length === 0) ? (
+                {aggregatedFileChanges(issue).length === 0 ? (
                   <div className={`p-8 text-center text-xs border rounded-xl ${themeConfig.subtleBorder} ${themeConfig.textMuted}`}>
                     暂无文件变更 Diff 数据
                   </div>
                 ) : (
                   <div className="space-y-4">
-                    {issue.devSpec.fileChanges.map((fc, idx) => (
+                    {aggregatedFileChanges(issue).map((fc, idx) => (
                       <div key={idx} className={`border rounded-xl overflow-hidden shadow-md ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
                         <div className={`p-3 border-b flex items-center justify-between text-xs font-mono ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
                           <span className="text-indigo-600 dark:text-indigo-300 font-bold">{fc.filePath}</span>

@@ -2,12 +2,13 @@ import React from 'react';
 import { Issue, GitRepo, BranchPrefixConfig } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
-import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight } from 'lucide-react';
+import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers } from 'lucide-react';
+import { hasSubRequirements, readySubCount } from '../lib/subreq';
 
 interface IssueCardProps {
   issue: Issue;
   onClick: () => void;
-  onStartAutoDev: (issueId: string) => void;
+  onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onMoveColumn: (issueId: string, newStatus: Issue['status']) => void;
   gitRepos: GitRepo[];
   branchPrefixConfig?: BranchPrefixConfig;
@@ -69,7 +70,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   return (
     <div
       onClick={onClick}
-      className={`p-4 rounded-xl border backdrop-blur-md transition-all shadow-sm hover:shadow-md group cursor-pointer flex flex-col justify-between gap-3 relative overflow-hidden ${
+      className={`p-4 rounded-xl border backdrop-blur-md transition-all shadow-sm hover:shadow-md group cursor-pointer flex flex-col justify-between gap-3 relative overflow-hidden min-w-0 ${
         isCompleted
           ? isLight
             ? 'border-emerald-300 bg-emerald-50/90 hover:bg-emerald-100/60 hover:border-emerald-400'
@@ -96,34 +97,34 @@ export const IssueCard: React.FC<IssueCardProps> = ({
 
       {/* Top Header */}
       <div>
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-1.5">
-            <span className={`px-2 py-0.5 rounded-md text-[10px] border ${priorityBadge.color}`}>
+        <div className="flex items-center justify-between gap-2 mb-2 min-w-0">
+          <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
+            <span className={`px-2 py-0.5 rounded-md text-[10px] border shrink-0 ${priorityBadge.color}`}>
               {priorityBadge.label}
             </span>
             {isCompleted && (
-              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 ${
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 min-w-0 ${
                 isLight
                   ? 'bg-emerald-100 text-emerald-900 border-emerald-300'
                   : 'bg-emerald-950/90 text-emerald-200 border-emerald-700/80'
               }`}>
                 <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
-                {t.approvedMerged}
+                <span className="truncate">{t.approvedMerged}</span>
               </span>
             )}
             {isInReview && (
-              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 ${
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 min-w-0 ${
                 isLight
                   ? 'bg-purple-100 text-purple-900 border-purple-300'
                   : 'bg-purple-950/90 text-purple-200 border-purple-700/80'
               }`}>
                 <GitPullRequest className="w-3 h-3 text-purple-400 shrink-0" />
-                {t.reviewPending}
+                <span className="truncate">{t.reviewPending}</span>
               </span>
             )}
           </div>
 
-          <span className={`text-[10px] font-mono tracking-wide ${themeConfig.textMuted}`}>#{issue.id}</span>
+          <span className={`text-[10px] font-mono tracking-wide shrink-0 ${themeConfig.textMuted}`}>#{issue.id}</span>
         </div>
 
         {/* Title */}
@@ -132,45 +133,54 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         </h4>
 
         {/* Repos & Branch Tags */}
-        <div className="flex items-center gap-1.5 flex-wrap mt-2.5">
+        <div className="flex items-center gap-1.5 flex-wrap mt-2.5 min-w-0">
           {associatedRepos.map((repo) => (
             <span
               key={repo.id}
               title={`${t.repoTooltip}: ${repo.name}`}
-              className={`px-2 py-0.5 rounded-md text-[10px] font-mono border flex items-center gap-1 shrink-0 transition-colors ${themeConfig.badgeRepoBg} ${themeConfig.badgeRepoText}`}
+              className={`px-2 py-0.5 rounded-md text-[10px] font-mono border flex items-center gap-1 max-w-full min-w-0 transition-colors ${themeConfig.badgeRepoBg} ${themeConfig.badgeRepoText}`}
             >
               <GitBranch className="w-3 h-3 text-indigo-400 shrink-0" />
-              {repo.name}
+              <span className="truncate">{repo.name}</span>
             </span>
           ))}
 
           {/* Target Branch Spec Tag */}
           <span
             title={`${t.branchTooltip}: ${activeBranchName}`}
-            className={`px-1.5 py-0.5 rounded-md border text-[9px] font-mono flex items-center gap-1 shrink-0 ${themeConfig.badgeBranchBg} ${themeConfig.badgeBranchText}`}
+            className={`px-1.5 py-0.5 rounded-md border text-[9px] font-mono flex items-center gap-1 max-w-full min-w-0 ${themeConfig.badgeBranchBg} ${themeConfig.badgeBranchText}`}
           >
             <Tag className="w-2.5 h-2.5 text-indigo-400 shrink-0" />
-            {activeBranchName}
+            <span className="truncate">{activeBranchName}</span>
           </span>
         </div>
       </div>
 
       {/* Middle Spec & Progress Status */}
       <div className={`space-y-2 pt-2 border-t ${themeConfig.subtleBorder}`}>
-        <div className="flex items-center justify-between text-[11px]">
-          <span className={`flex items-center gap-1 text-[10px] font-medium ${themeConfig.textSecondary}`}>
-            <FileText className="w-3 h-3 opacity-80" />
-            {t.devSpecLabel}:
+        <div className="flex items-center justify-between gap-2 text-[11px] min-w-0">
+          <span className={`flex items-center gap-1 text-[10px] font-medium min-w-0 ${themeConfig.textSecondary}`}>
+            <FileText className="w-3 h-3 opacity-80 shrink-0" />
+            <span className="truncate">{t.devSpecLabel}</span>
           </span>
-          {issue.devSpec ? (
-            <span className={`font-semibold flex items-center gap-1 text-[10px] ${
+          {hasSubRequirements(issue) ? (
+            <span className={`font-semibold flex items-center gap-1 text-[10px] shrink-0 ${
+              isLight ? 'text-indigo-800' : 'text-indigo-200'
+            }`}>
+              <Layers className="w-3 h-3 shrink-0" />
+              {t.specCountLabel
+                .replace('{ready}', String(readySubCount(issue).ready))
+                .replace('{total}', String(readySubCount(issue).total))}
+            </span>
+          ) : issue.devSpec ? (
+            <span className={`font-semibold flex items-center gap-1 text-[10px] shrink-0 ${
               isLight ? 'text-emerald-700' : 'text-emerald-300'
             }`}>
-              <CheckCircle2 className="w-3 h-3" />
+              <CheckCircle2 className="w-3 h-3 shrink-0" />
               {t.specGenerated}
             </span>
           ) : (
-            <span className={`italic text-[10px] ${
+            <span className={`italic text-[10px] shrink-0 ${
               isLight ? 'text-amber-800' : 'text-amber-300/90'
             }`}>{t.pendingSpec}</span>
           )}
@@ -213,71 +223,77 @@ export const IssueCard: React.FC<IssueCardProps> = ({
         )}
       </div>
 
-      {/* Card Footer Actions */}
-      <div className={`flex items-center justify-between text-[11px] pt-1 ${themeConfig.textSecondary}`}>
-        <div className="flex items-center gap-1.5 text-[10px]">
-          <div className={`w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold ${
+      {/* Card Footer Actions: stack so assignee and CTA never compete for width */}
+      <div className={`flex flex-col gap-2 text-[11px] pt-1 ${themeConfig.textSecondary}`}>
+        <div className="flex items-center gap-1.5 text-[10px] min-w-0">
+          <div className={`w-4 h-4 rounded-full shrink-0 flex items-center justify-center text-[9px] font-bold ${
             isLight
               ? 'bg-indigo-100 border border-indigo-300 text-indigo-900'
               : 'bg-indigo-950/90 border border-indigo-700/80 text-indigo-200'
           }`}>
             {issue.assignee ? issue.assignee[0].toUpperCase() : 'U'}
           </div>
-          <span className={`truncate max-w-[80px] font-medium ${
-            isLight ? 'text-slate-700' : 'text-slate-200'
-          }`}>{issue.assignee}</span>
+          <span
+            title={issue.assignee}
+            className={`truncate min-w-0 flex-1 font-medium ${
+              isLight ? 'text-slate-700' : 'text-slate-200'
+            }`}
+          >
+            {issue.assignee}
+          </span>
         </div>
 
-        {/* Quick Column Move Actions */}
-        <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-          {issue.status === 'requirements' && (
-            <button
-              onClick={() => onMoveColumn(issue.id, 'backlog')}
-              className={`px-2.5 py-1 border rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${
-                isLight
-                  ? 'bg-cyan-100 hover:bg-cyan-200 border-cyan-300 text-cyan-950'
-                  : 'bg-cyan-950/90 hover:bg-cyan-900/90 border-cyan-700/80 text-cyan-200'
-              }`}
-            >
-              <Sparkles className="w-3 h-3 text-cyan-400" />
-              {t.scheduleToBacklog}
-            </button>
-          )}
+        {(issue.status === 'requirements' || issue.status === 'backlog' || issue.status === 'in_review' || isCompleted) && (
+          <div className="flex w-full min-w-0" onClick={(e) => e.stopPropagation()}>
+            {issue.status === 'requirements' && (
+              <button
+                onClick={() => onMoveColumn(issue.id, 'backlog')}
+                className={`w-full justify-center px-2.5 py-1.5 border rounded-lg text-[10px] font-bold flex items-center gap-1 whitespace-nowrap transition-all ${
+                  isLight
+                    ? 'bg-cyan-100 hover:bg-cyan-200 border-cyan-300 text-cyan-950'
+                    : 'bg-cyan-950/90 hover:bg-cyan-900/90 border-cyan-700/80 text-cyan-200'
+                }`}
+              >
+                <Sparkles className="w-3 h-3 text-cyan-400 shrink-0" />
+                {t.scheduleToBacklog}
+              </button>
+            )}
 
-          {issue.status === 'backlog' && (
-            <button
-              onClick={() => onStartAutoDev(issue.id)}
-              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/50 rounded-lg text-[10px] font-bold text-white flex items-center gap-1 shadow-md transition-all active:scale-95"
-            >
-              <Play className="w-3 h-3 fill-current" />
-              {t.startAutoDev}
-            </button>
-          )}
+            {issue.status === 'backlog' && (
+              <button
+                onClick={() => onStartAutoDev(issue.id)}
+                className="w-full justify-center px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 border border-indigo-400/50 rounded-lg text-[10px] font-bold text-white flex items-center gap-1 whitespace-nowrap shadow-md transition-all active:scale-95"
+              >
+                <Play className="w-3 h-3 fill-current shrink-0" />
+                {t.startAutoDev}
+              </button>
+            )}
 
-          {issue.status === 'in_review' && (
-            <button
-              onClick={onClick}
-              className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 border border-purple-400/50 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all shadow-md animate-pulse"
-            >
-              <GitPullRequest className="w-3 h-3" />
-              {t.reviewPR}
-            </button>
-          )}
+            {issue.status === 'in_review' && (
+              <button
+                onClick={onClick}
+                className="w-full justify-center px-2.5 py-1.5 bg-purple-600 hover:bg-purple-500 border border-purple-400/50 text-white rounded-lg text-[10px] font-bold flex items-center gap-1 whitespace-nowrap transition-all shadow-md animate-pulse"
+              >
+                <GitPullRequest className="w-3 h-3 shrink-0" />
+                {t.reviewPR}
+              </button>
+            )}
 
-          {isCompleted && (
-            <button
-              onClick={onClick}
-              className={`px-2 py-1 border rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${
-                isLight
-                  ? 'bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-950'
-                  : 'bg-emerald-950/90 hover:bg-emerald-900/90 border-emerald-700/80 text-emerald-200'
-              }`}
-            >
-              <span>{t.viewSpecDiff}</span>
-              <ArrowRight className="w-3 h-3 text-emerald-400" />
-            </button>
-          )}
-        </div>
+            {isCompleted && (
+              <button
+                onClick={onClick}
+                className={`w-full justify-center px-2 py-1.5 border rounded-lg text-[10px] font-bold flex items-center gap-1 whitespace-nowrap transition-all ${
+                  isLight
+                    ? 'bg-emerald-100 hover:bg-emerald-200 border-emerald-300 text-emerald-950'
+                    : 'bg-emerald-950/90 hover:bg-emerald-900/90 border-emerald-700/80 text-emerald-200'
+                }`}
+              >
+                <span>{t.viewSpecDiff}</span>
+                <ArrowRight className="w-3 h-3 text-emerald-400 shrink-0" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

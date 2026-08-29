@@ -71,6 +71,21 @@ export interface DevSpec {
   updatedAt: string;
 }
 
+export type SubRequirementStatus = 'pending' | 'ready' | 'in_progress' | 'done' | 'failed';
+
+export interface SubRequirement {
+  id: string;
+  title: string;
+  description: string;
+  order: number;
+  status: SubRequirementStatus;
+  devSpec?: DevSpec;
+  chatMessages: ChatMessage[];
+  autoDevLogs: AutoDevLog[];
+  commitSha?: string;
+  reviewFeedback?: string;
+}
+
 export interface AutoDevLog {
   id: string;
   timestamp: string;
@@ -105,6 +120,9 @@ export interface Issue {
   assignee: string;
   chatMessages: ChatMessage[];
   devSpec?: DevSpec;
+  subRequirements?: SubRequirement[];
+  currentSubId?: string;
+  reworkSubId?: string;
   autoDevLogs: AutoDevLog[];
   autoDevProgress: number; // 0 - 100
   prInfo?: PRInfo;

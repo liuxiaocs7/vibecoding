@@ -54,6 +54,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/chat", s.handleChat)
 	mux.HandleFunc("POST /api/test-openapi", s.handleTestOpenAPI)
 	mux.HandleFunc("POST /api/issues/{id}/spec", s.handleGenerateSpec)
+	mux.HandleFunc("GET /api/issues/{id}/export-spec", s.handleExportSpec)
+	mux.HandleFunc("POST /api/export-file", s.handleExportFile)
+	mux.HandleFunc("POST /api/issues/{id}/split", s.handleSplitIssue)
 
 	mux.HandleFunc("POST /api/auto-dev/start", s.handleAutoDevStart)
 	mux.HandleFunc("GET /api/auto-dev/jobs/{id}", s.handleGetJob)
@@ -221,9 +224,9 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	cfg, _ := s.Store.GetModelConfig()
 	configured, _ := model.MaskKey(cfg.OpenAIAPIKey)
 	writeJSON(w, 200, map[string]any{
-		"status":         "ok",
-		"timestamp":      time.Now().UTC().Format(time.RFC3339),
-		"llmConfigured":  configured,
+		"status":        "ok",
+		"timestamp":     time.Now().UTC().Format(time.RFC3339),
+		"llmConfigured": configured,
 	})
 }
 
@@ -428,8 +431,8 @@ func validateStatusTransition(old, neu *model.Issue) error {
 	}
 	switch neu.Status {
 	case model.StatusBacklog:
-		if neu.DevSpec == nil || strings.TrimSpace(neu.DevSpec.RawMarkdown) == "" {
-			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec")
+		if !neu.SpecReadyForDev() {
+			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec (all sub-requirements need specs when split)")
 		}
 		if len(neu.AssociatedRepoIDs) == 0 {
 			return fmt.Errorf("cannot move to backlog without associated repositories")
@@ -485,14 +488,14 @@ func (s *Server) resolveModel(projectID string) (model.ModelConfig, error) {
 }
 
 type chatBody struct {
-	Prompt            string             `json:"prompt"`
-	Messages          []model.ChatMessage `json:"messages"`
-	IssueTitle        string             `json:"issueTitle"`
-	IssueDescription  string             `json:"issueDescription"`
-	AssociatedRepos  []repoRef          `json:"associatedRepos"`
-	GenerateSpec      bool               `json:"generateSpec"`
-	ProjectID         string             `json:"projectId"`
-	IssueID           string             `json:"issueId"`
+	Prompt           string              `json:"prompt"`
+	Messages         []model.ChatMessage `json:"messages"`
+	IssueTitle       string              `json:"issueTitle"`
+	IssueDescription string              `json:"issueDescription"`
+	AssociatedRepos  []repoRef           `json:"associatedRepos"`
+	GenerateSpec     bool                `json:"generateSpec"`
+	ProjectID        string              `json:"projectId"`
+	IssueID          string              `json:"issueId"`
 }
 
 type repoRef struct {
@@ -583,207 +586,6 @@ Prefer structured sections: Summary, Architecture, Target Files, Implementation 
 	writeJSON(w, 200, map[string]string{"text": text})
 }
 
-func (s *Server) handleGenerateSpec(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	issue, err := s.Store.GetIssue(id)
-	if err != nil || issue == nil {
-		writeErr(w, 404, "issue not found")
-		return
-	}
-	var body struct {
-		Prompt   string `json:"prompt"`
-		Messages []model.ChatMessage `json:"messages"`
-	}
-	_ = decodeJSON(r, &body)
-
-	proj, _ := s.Store.GetProject(issue.ProjectID)
-	cfg, _ := s.resolveModel(issue.ProjectID)
-
-	var repos []repoRef
-	if proj != nil {
-		for _, rid := range issue.AssociatedRepoIDs {
-			for _, gr := range proj.GitRepos {
-				if gr.ID == rid {
-					repos = append(repos, repoRef{Name: gr.Name, Path: gr.Path, DefaultBranch: gr.DefaultBranch})
-				}
-			}
-		}
-	}
-
-	system := `You are a Senior VibeCoding AI Architect assisting via chat.
-Each user message should UPDATE the Development Spec document.
-
-Return ONLY a JSON object (no markdown fences) with:
-- chatReply: short natural-language reply to the user (what you understood / changed); 2-8 sentences; NOT the full document
-- rawMarkdown: the COMPLETE updated Dev Spec in Markdown (this is the stored document). Include:
-  # Title
-  ## Executive Summary / 概述
-  ## Architecture Design / 架构设计
-  ## Target Files & Changes / 修改文件
-  ## Implementation Steps / 实施步骤
-  ## Test Cases / 测试用例
-- title: short title
-Optional agent fields aligned with the markdown:
-- summary, architectureDesign
-- fileChanges: [{filePath, repoName, action(create|modify|delete), summary}]
-- implementationSteps, testCases
-
-Rules:
-- If a previous Dev Spec is provided, revise it in place based on the latest user message; do not discard unrelated sections.
-- Use exact repo names from context. Relative file paths only.`
-
-	repoDesc := ""
-	for _, repo := range repos {
-		repoDesc += fmt.Sprintf("- %s path=%s branch=%s\n", repo.Name, repo.Path, repo.DefaultBranch)
-	}
-	prevSpec := ""
-	if issue.DevSpec != nil && strings.TrimSpace(issue.DevSpec.RawMarkdown) != "" {
-		prevSpec = issue.DevSpec.RawMarkdown
-	}
-	user := fmt.Sprintf(`Issue title: %s
-Description: %s
-Repos:
-%s
-
-Previous Dev Spec Markdown (may be empty):
------
-%s
------
-
-Latest user message:
-%s
-
-Update the Dev Spec accordingly and return JSON with chatReply + rawMarkdown.`,
-		issue.Title, issue.Description, repoDesc, prevSpec, body.Prompt)
-
-	// Keep recent chat for context (skip dumping full prior AI markdown into history).
-	msgs := make([]llm.ChatMessage, 0, 8)
-	start := 0
-	if len(body.Messages) > 12 {
-		start = len(body.Messages) - 12
-	}
-	for _, m := range body.Messages[start:] {
-		role := "assistant"
-		if m.Sender == "user" {
-			role = "user"
-		} else if m.Sender == "system" {
-			continue
-		}
-		text := m.Text
-		if role == "assistant" && len(text) > 800 {
-			text = text[:800] + "…"
-		}
-		msgs = append(msgs, llm.ChatMessage{Role: role, Content: text})
-	}
-	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
-
-	// Allow rate-limit retries (up to 10) with backoff.
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
-	defer cancel()
-	chatReqJSON := llm.ChatRequest{
-		ModelConfig: cfg,
-		System:      system,
-		Messages:    msgs,
-		Temperature: 0.3,
-		JSONMode:    true,
-	}
-	chatReqPlain := llm.ChatRequest{
-		ModelConfig: cfg,
-		System:      system,
-		Messages:    msgs,
-		Temperature: 0.3,
-	}
-
-	runSpec := func(stream bool, onDelta func(string)) (string, error) {
-		if stream {
-			var gotDelta bool
-			wrap := func(delta string) {
-				if delta != "" {
-					gotDelta = true
-				}
-				if onDelta != nil {
-					onDelta(delta)
-				}
-			}
-			text, err := s.LLM.ChatStream(ctx, chatReqJSON, wrap)
-			if err != nil && !gotDelta {
-				text, err = s.LLM.ChatStream(ctx, chatReqPlain, wrap)
-			}
-			return text, err
-		}
-		text, err := s.LLM.Chat(ctx, chatReqJSON)
-		if err != nil {
-			text, err = s.LLM.Chat(ctx, chatReqPlain)
-		}
-		return text, err
-	}
-
-	if wantsStream(r) {
-		sse, err := newSSE(w)
-		if err != nil {
-			writeErr(w, 500, err.Error())
-			return
-		}
-		_ = sse.event(map[string]any{"type": "status", "message": "calling_model"})
-		var lastFlush time.Time
-		var buf strings.Builder
-		text, err := runSpec(true, func(delta string) {
-			buf.WriteString(delta)
-			// Coalesce tiny chunks so the UI isn't flooded.
-			now := time.Now()
-			if now.Sub(lastFlush) < 40*time.Millisecond && buf.Len() < 64 {
-				return
-			}
-			chunk := buf.String()
-			buf.Reset()
-			lastFlush = now
-			_ = sse.event(map[string]any{"type": "delta", "text": chunk})
-		})
-		if rem := buf.String(); rem != "" {
-			_ = sse.event(map[string]any{"type": "delta", "text": rem})
-		}
-		if err != nil {
-			_ = sse.event(map[string]any{"type": "error", "error": err.Error()})
-			return
-		}
-		spec, chatReply, err := llm.ParseDevSpecJSON(text, issue.Title)
-		if err != nil {
-			_ = sse.event(map[string]any{"type": "error", "error": err.Error()})
-			return
-		}
-		issue.DevSpec = spec
-		_ = s.Store.UpsertIssue(*issue)
-		_ = sse.event(map[string]any{
-			"type":      "done",
-			"spec":      spec,
-			"text":      chatReply,
-			"chatReply": chatReply,
-			"process":   text,
-		})
-		return
-	}
-
-	text, err := runSpec(false, nil)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	spec, chatReply, err := llm.ParseDevSpecJSON(text, issue.Title)
-	if err != nil {
-		writeErr(w, 500, err.Error())
-		return
-	}
-	issue.DevSpec = spec
-	_ = s.Store.UpsertIssue(*issue)
-	// `process` is the raw model output for ephemeral UI only — not persisted separately.
-	writeJSON(w, 200, map[string]any{
-		"spec":      spec,
-		"text":      chatReply,
-		"chatReply": chatReply,
-		"process":   text,
-	})
-}
-
 func (s *Server) handleTestOpenAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		OpenAIBaseURL string `json:"openAIBaseUrl"`
@@ -837,7 +639,8 @@ func (s *Server) handleTestOpenAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		IssueID string `json:"issueId"`
+		IssueID          string `json:"issueId"`
+		SubRequirementID string `json:"subRequirementId"`
 	}
 	if err := decodeJSON(r, &body); err != nil || body.IssueID == "" {
 		writeErr(w, 400, "issueId required")
@@ -848,9 +651,18 @@ func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "issue not found")
 		return
 	}
-	if issue.DevSpec == nil {
-		writeErr(w, 400, "Dev Spec required before Auto-Dev")
+	if !issue.SpecReadyForDev() {
+		writeErr(w, 400, "Dev Spec required before Auto-Dev (all sub-requirements need specs when split)")
 		return
+	}
+	if body.SubRequirementID != "" {
+		if issue.SubByID(body.SubRequirementID) == nil {
+			writeErr(w, 400, "sub-requirement not found")
+			return
+		}
+		issue.ReworkSubID = body.SubRequirementID
+	} else {
+		issue.ReworkSubID = ""
 	}
 	if len(issue.AssociatedRepoIDs) == 0 {
 		writeErr(w, 400, "associated repositories required")
@@ -863,11 +675,23 @@ func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 
 	issue.Status = model.StatusInProgress
 	issue.AutoDevProgress = 5
+	startMsg := "Starting VibeBot Auto-Dev job..."
+	if issue.HasSubRequirements() {
+		if issue.ReworkSubID != "" {
+			title := issue.ReworkSubID
+			if sub := issue.SubByID(issue.ReworkSubID); sub != nil {
+				title = sub.Title
+			}
+			startMsg = fmt.Sprintf("Starting sequential Auto-Dev rework for sub-requirement: %s", title)
+		} else {
+			startMsg = fmt.Sprintf("Starting sequential Auto-Dev for %d sub-requirement(s)...", len(issue.SubRequirements))
+		}
+	}
 	issue.AutoDevLogs = append(issue.AutoDevLogs, model.AutoDevLog{
 		ID:        "log-" + uuid.NewString()[:8],
 		Timestamp: time.Now().Format("15:04:05"),
 		Phase:     "analyzing",
-		Message:   "Starting VibeBot Auto-Dev job...",
+		Message:   startMsg,
 	})
 	_ = s.Store.UpsertIssue(*issue)
 
