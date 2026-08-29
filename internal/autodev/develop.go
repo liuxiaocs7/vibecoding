@@ -1,0 +1,313 @@
+package autodev
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/ymhhh/vibecoding/internal/executor"
+	"github.com/ymhhh/vibecoding/internal/gitx"
+	"github.com/ymhhh/vibecoding/internal/model"
+	"github.com/ymhhh/vibecoding/internal/repocontext"
+)
+
+func (r *Runner) developSubs(
+	ctx context.Context,
+	job *model.AutoDevJob,
+	issue *model.Issue,
+	repos []model.GitRepo,
+	cfg model.ModelConfig,
+	execCfg model.ExecutorConfig,
+	progress func(int, string, string) error,
+) (*model.QualityGate, error) {
+	issue.NormalizeSubs()
+	indices := make([]int, 0, len(issue.SubRequirements))
+	reworkID := strings.TrimSpace(issue.ReworkSubID)
+	if reworkID != "" {
+		found := false
+		for i, sub := range issue.SubRequirements {
+			if sub.ID == reworkID {
+				indices = append(indices, i)
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("rework sub-requirement %s not found", reworkID)
+		}
+	} else {
+		for i := range issue.SubRequirements {
+			indices = append(indices, i)
+		}
+	}
+	n := len(indices)
+	if n == 0 {
+		return nil, fmt.Errorf("no sub-requirements to develop")
+	}
+
+	var lastQuality *model.QualityGate
+	for k, idx := range indices {
+		sub := &issue.SubRequirements[idx]
+		if sub.DevSpec == nil {
+			return nil, fmt.Errorf("sub-requirement %q has no Dev Spec", sub.Title)
+		}
+		sub.Status = model.SubReqInProgress
+		issue.CurrentSubID = sub.ID
+		issue.UpdatedAt = model.NowISO()
+		_ = r.Store.UpsertIssue(*issue)
+
+		pStart := 20 + 70*k/n
+		pEnd := 20 + 70*(k+1)/n
+		label := fmt.Sprintf("[%d/%d] %s", k+1, n, sub.Title)
+		if err := progress(pStart, "coding", "Developing sub-requirement "+label); err != nil {
+			return nil, err
+		}
+		r.Hub.Publish(job.ID, model.JobEvent{
+			Type:             "progress",
+			Phase:            "coding",
+			Message:          "Developing " + label,
+			Progress:         pStart,
+			Status:           string(model.JobRunning),
+			SubRequirementID: sub.ID,
+			SubTitle:         sub.Title,
+			SubIndex:         k + 1,
+			SubTotal:         n,
+		})
+
+		var extra strings.Builder
+		extra.WriteString(fmt.Sprintf("This is sub-requirement %d of %d for parent issue %q.\n", sub.Order, len(issue.SubRequirements), issue.Title))
+		extra.WriteString("Implement ONLY this sub-requirement. Do not undo earlier sub-requirement work.\n")
+		if reworkID != "" {
+			extra.WriteString("This is a REWORK pass: previous code is already on the branch. Update this sub's files.\n")
+		}
+		for _, sib := range issue.SubRequirements {
+			if sib.ID == sub.ID {
+				continue
+			}
+			extra.WriteString(fmt.Sprintf("- sibling [%d] %s (%s)\n", sib.Order, sib.Title, sib.Status))
+		}
+
+		q, err := r.developOne(ctx, job, issue, repos, cfg, execCfg, sub.DevSpec, sub.Title, firstNonEmpty(sub.Description, issue.Description), extra.String(), pStart, pEnd, k == n-1, progress)
+		if err != nil {
+			sub.Status = model.SubReqFailed
+			issue.UpdatedAt = model.NowISO()
+			_ = r.Store.UpsertIssue(*issue)
+			return q, fmt.Errorf("sub-requirement %q: %w", sub.Title, err)
+		}
+		lastQuality = q
+
+		sha := ""
+		if len(repos) > 0 {
+			sha, _ = gitx.HeadSHA(repos[0].Path)
+		}
+		if fresh, err := r.Store.GetIssue(issue.ID); err == nil && fresh != nil {
+			*issue = *fresh
+		}
+		if target := issue.SubByID(sub.ID); target != nil {
+			target.Status = model.SubReqDone
+			target.CommitSHA = sha
+		}
+		issue.CurrentSubID = sub.ID
+		issue.UpdatedAt = model.NowISO()
+		_ = r.Store.UpsertIssue(*issue)
+		_ = r.appendLog(job, "committing", fmt.Sprintf("Completed sub-requirement %s", label), sha)
+	}
+
+	issue.ReworkSubID = ""
+	issue.CurrentSubID = ""
+	issue.UpdatedAt = model.NowISO()
+	_ = r.Store.UpsertIssue(*issue)
+	return lastQuality, nil
+}
+
+func (r *Runner) buildExecutor(execCfg model.ExecutorConfig) (executor.Executor, error) {
+	if r.NewExecutor != nil {
+		return r.NewExecutor(execCfg)
+	}
+	return executor.Build(execCfg, r.LLM)
+}
+
+func (r *Runner) developOne(
+	ctx context.Context,
+	job *model.AutoDevJob,
+	issue *model.Issue,
+	repos []model.GitRepo,
+	cfg model.ModelConfig,
+	execCfg model.ExecutorConfig,
+	spec *model.DevSpec,
+	title, desc, extra string,
+	pStart, pEnd int,
+	withLint bool,
+	progress func(int, string, string) error,
+) (*model.QualityGate, error) {
+	if spec == nil {
+		return nil, fmt.Errorf("missing Dev Spec")
+	}
+	span := pEnd - pStart
+	if span < 8 {
+		span = 8
+	}
+	pCode := pStart
+	pTest := pStart + span*50/100
+	pLint := pStart + span*75/100
+	pCommit := pEnd
+	if pTest <= pCode {
+		pTest = pCode + 1
+	}
+
+	ex, err := r.buildExecutor(execCfg)
+	if err != nil {
+		return nil, err
+	}
+	emit := func(phase, msg, details string) {
+		_ = r.appendLog(job, phase, msg, details)
+	}
+
+	maxHeal := execCfg.Normalize().MaxHeal
+	quality := &model.QualityGate{}
+	healExtra := extra
+	var sessionID string
+
+	for round := 0; round <= maxHeal; round++ {
+		if round > 0 {
+			quality.RepairRounds = round
+			if err := progress(pCode, "coding", fmt.Sprintf("Repair round %d/%d for %s...", round, maxHeal, title)); err != nil {
+				return quality, err
+			}
+			_ = r.appendLog(job, "testing", fmt.Sprintf("tests failed, repair round %d/%d", round, maxHeal), "")
+		} else if err := progress(pCode, "coding", fmt.Sprintf("Generating code for %s via %s...", title, ex.Name())); err != nil {
+			return quality, err
+		}
+
+		var allChanges []model.SpecFileChange
+		for _, repo := range repos {
+			snaps, err := repocontext.Collect([]model.GitRepo{repo}, spec.FileChanges)
+			if err != nil {
+				return quality, err
+			}
+			req := executor.CodingRequest{
+				RepoPath:    repo.Path,
+				RepoName:    repo.Name,
+				Title:       title,
+				Description: desc,
+				Spec:        spec,
+				Extra:       healExtra,
+				Snapshots:   snaps,
+				Resume:      sessionID,
+				ModelConfig: cfg,
+			}
+			res, err := ex.Run(ctx, req, emit)
+			if err != nil {
+				return quality, fmt.Errorf("executor %s on %s: %w", ex.Name(), repo.Name, err)
+			}
+			if res.SessionID != "" {
+				sessionID = res.SessionID
+			}
+			allChanges = append(allChanges, res.Changes...)
+		}
+
+		if len(allChanges) > 0 {
+			spec.FileChanges = allChanges
+			spec.UpdatedAt = model.NowISO()
+			if issue.HasSubRequirements() {
+				if fresh, e := r.Store.GetIssue(issue.ID); e == nil && fresh != nil {
+					*issue = *fresh
+				}
+				if target := issue.SubByID(issue.CurrentSubID); target != nil && target.DevSpec != nil {
+					target.DevSpec.FileChanges = allChanges
+					target.DevSpec.UpdatedAt = spec.UpdatedAt
+				}
+			} else if issue.DevSpec != nil {
+				issue.DevSpec.FileChanges = allChanges
+				issue.DevSpec.UpdatedAt = spec.UpdatedAt
+			}
+			_ = r.Store.UpsertIssue(*issue)
+		}
+
+		if err := progress(pTest, "testing", fmt.Sprintf("Running tests after %s...", title)); err != nil {
+			return quality, err
+		}
+		testFailed := false
+		var failBuf strings.Builder
+		for _, repo := range repos {
+			out, skipped, err := runTests(repo)
+			if skipped {
+				_ = r.appendLog(job, "testing", fmt.Sprintf("[%s] no test command detected — skipped", repo.Name), out)
+				continue
+			}
+			quality.TestsRan = true
+			if err != nil {
+				testFailed = true
+				quality.TestsPassed = false
+				failBuf.WriteString(fmt.Sprintf("[%s]\n%s\n", repo.Name, out))
+				_ = r.appendLog(job, "testing", fmt.Sprintf("[%s] tests failed", repo.Name), truncate(out, 1500))
+				continue
+			}
+			_ = r.appendLog(job, "testing", fmt.Sprintf("[%s] tests passed", repo.Name), truncate(out, 800))
+		}
+		if !testFailed {
+			if quality.TestsRan {
+				quality.TestsPassed = true
+			}
+			quality.TestsOutput = ""
+			break
+		}
+		quality.TestsOutput = truncate(failBuf.String(), 4000)
+		if round == maxHeal {
+			return quality, fmt.Errorf("tests failed after %d repair round(s):\n%s", maxHeal, truncate(quality.TestsOutput, 1500))
+		}
+		healExtra = extra
+		if healExtra != "" {
+			healExtra += "\n\n"
+		}
+		healExtra += "Previous tests failed. Fix the failures using this output:\n" + quality.TestsOutput
+	}
+
+	if withLint {
+		if err := progress(pLint, "linting", "Running lightweight static checks..."); err != nil {
+			return quality, err
+		}
+		var lintBuf strings.Builder
+		lintFailed := false
+		for _, repo := range repos {
+			out, skipped, err := runLint(repo)
+			if skipped {
+				_ = r.appendLog(job, "linting", fmt.Sprintf("[%s] lint skipped", repo.Name), "")
+				continue
+			}
+			quality.LintRan = true
+			if err != nil {
+				lintFailed = true
+				lintBuf.WriteString(fmt.Sprintf("[%s]\n%s\n", repo.Name, out))
+				_ = r.appendLog(job, "linting", fmt.Sprintf("[%s] lint warnings (non-blocking): %v", repo.Name, err), truncate(out, 600))
+			} else {
+				_ = r.appendLog(job, "linting", fmt.Sprintf("[%s] lint ok", repo.Name), truncate(out, 400))
+			}
+		}
+		quality.LintPassed = quality.LintRan && !lintFailed
+		quality.LintOutput = truncate(lintBuf.String(), 2000)
+	}
+
+	if err := progress(pCommit, "committing", fmt.Sprintf("Committing %s...", title)); err != nil {
+		return quality, err
+	}
+	for _, repo := range repos {
+		dirty, err := gitx.IsDirty(repo.Path)
+		if err != nil {
+			return quality, fmt.Errorf("dirty check %s: %w", repo.Name, err)
+		}
+		if !dirty {
+			_ = r.appendLog(job, "committing", fmt.Sprintf("[%s] nothing to commit for %s", repo.Name, title), "")
+			continue
+		}
+		msg := fmt.Sprintf("feat: %s\n\nAuto-generated by Vibecoding for issue %s", title, issue.ID)
+		if extra != "" {
+			msg = fmt.Sprintf("feat: %s\n\nSub-requirement of %s (%s).\nAuto-generated by Vibecoding.", title, issue.Title, issue.ID)
+		}
+		if err := gitx.CommitAll(repo.Path, msg); err != nil {
+			return quality, fmt.Errorf("commit %s: %w", repo.Name, err)
+		}
+		_ = r.appendLog(job, "committing", fmt.Sprintf("[%s] committed %s", repo.Name, title), "")
+	}
+	return quality, nil
+}
