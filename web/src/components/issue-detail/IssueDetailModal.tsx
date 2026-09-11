@@ -222,6 +222,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     try {
       const result = await saveTextFile(filename, markdown);
       if (result.status === 'cancelled') {
+        setExportHint(lang === 'zh' ? '已取消导出' : 'Export cancelled');
         return;
       }
       if (result.status === 'copied') {

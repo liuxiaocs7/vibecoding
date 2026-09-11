@@ -19,7 +19,11 @@ function findBoundFn(name: string): ((...args: never[]) => unknown) | undefined 
 }
 
 export function isDesktopApp(): boolean {
-  return !!findBoundFn('WindowToggleMaximise') || !!findBoundFn('SaveTextFile');
+  return (
+    !!findBoundFn('WindowToggleMaximise') ||
+    !!findBoundFn('SaveTextFile') ||
+    !!findBoundFn('SaveTextFileToDownloads')
+  );
 }
 
 export async function toggleDesktopMaximize(): Promise<void> {

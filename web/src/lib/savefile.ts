@@ -13,7 +13,6 @@ type WailsWindow = Window & {
     types?: { description: string; accept: Record<string, string[]> }[];
   }) => Promise<SavePickerHandle>;
   go?: Record<string, Record<string, Record<string, unknown>>>;
-  runtime?: { BrowserOpenURL?: (url: string) => void };
 };
 
 export type SaveTextResult =
@@ -21,17 +20,16 @@ export type SaveTextResult =
   | { status: 'cancelled' }
   | { status: 'copied' };
 
-function wailsSaveFn(): ((filename: string, contents: string) => Promise<string>) | undefined {
-  const w = window as WailsWindow;
-  const pkgs = w.go;
+function findWailsFn(name: string): ((...args: string[]) => Promise<string>) | undefined {
+  const pkgs = (window as WailsWindow).go;
   if (!pkgs || typeof pkgs !== 'object') return undefined;
   for (const pkg of Object.values(pkgs)) {
     if (!pkg || typeof pkg !== 'object') continue;
     for (const svc of Object.values(pkg)) {
       if (!svc || typeof svc !== 'object') continue;
-      const fn = (svc as { SaveTextFile?: unknown }).SaveTextFile;
+      const fn = (svc as Record<string, unknown>)[name];
       if (typeof fn === 'function') {
-        return fn as (filename: string, contents: string) => Promise<string>;
+        return fn as (...args: string[]) => Promise<string>;
       }
     }
   }
@@ -103,24 +101,57 @@ async function copyToClipboard(contents: string): Promise<boolean> {
   }
 }
 
+/**
+ * Save markdown for the "导出下载" button.
+ *
+ * Desktop (Wails): write straight to ~/Downloads first. Native save-sheets often
+ * open behind the Issue modal and look like a dead click when cancelled — we
+ * must not stop the fallback chain on that cancel path for the download button.
+ */
 export async function saveTextFile(filename: string, contents: string): Promise<SaveTextResult> {
-  const wailsSave = wailsSaveFn();
-  if (wailsSave) {
+  // 1) Desktop: direct Downloads write (most reliable in WKWebView + modal UI).
+  const toDownloads = findWailsFn('SaveTextFileToDownloads');
+  if (toDownloads) {
     try {
-      const path = await wailsSave(filename, contents);
-      if (!path) return { status: 'cancelled' };
-      return { status: 'saved', path };
+      const path = await toDownloads(filename, contents);
+      if (path) {
+        void findWailsFn('RevealInFinder')?.(path);
+        return { status: 'saved', path };
+      }
     } catch {
-      // Binding present but dialog failed — keep going.
+      // Fall through to dialog / HTTP / clipboard.
     }
   }
 
+  // 2) Native save-as dialog (optional; may open behind modal).
+  const wailsSave = findWailsFn('SaveTextFile');
+  if (wailsSave) {
+    try {
+      const path = await wailsSave(filename, contents);
+      if (path) {
+        void findWailsFn('RevealInFinder')?.(path);
+        return { status: 'saved', path };
+      }
+      // Cancelled — still try server-side Downloads so the button never feels dead.
+    } catch {
+      // Dialog failed — keep going.
+    }
+  }
+
+  // 3) Browser File System Access API.
   const picked = await saveViaPicker(filename, contents);
   if (picked) return picked;
 
+  // 4) Local HTTP API → ~/Downloads (works in desktop asset server + browser server mode).
   const local = await saveViaLocalAPI(filename, contents);
-  if (local) return local;
+  if (local) {
+    if (local.status === 'saved' && local.path) {
+      void findWailsFn('RevealInFinder')?.(local.path);
+    }
+    return local;
+  }
 
+  // 5) Last resort: clipboard.
   if (await copyToClipboard(contents)) {
     return { status: 'copied' };
   }
