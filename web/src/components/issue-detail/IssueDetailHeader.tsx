@@ -3,13 +3,15 @@ import { Issue } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { specReadyForDev } from '../../lib/subreq';
-import { X, Play, Trash2 } from 'lucide-react';
+import { X, Play, Trash2, Minus } from 'lucide-react';
 
 interface IssueDetailHeaderProps {
   issue: Issue;
   lang: Language;
   themeStyle: ThemeStyle;
   onClose: () => void;
+  onMinimize?: () => void;
+  analyzing?: boolean;
   onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onDeleteIssue?: (issueId: string) => void;
   setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
@@ -20,6 +22,8 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
   lang,
   themeStyle,
   onClose,
+  onMinimize,
+  analyzing,
   onStartAutoDev,
   onDeleteIssue,
   setActiveTab,
@@ -76,12 +80,22 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
           </button>
         )}
 
+        {onMinimize && (
+          <button
+            type="button"
+            onClick={onMinimize}
+            aria-label={analyzing ? t.minimizeWhileAnalyzing : t.minimizeIssue}
+            className={`p-2 rounded-xl transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
+            title={analyzing ? t.minimizeWhileAnalyzing : t.minimizeIssue}
+          >
+            <Minus className="w-5 h-5" />
+          </button>
+        )}
         {onDeleteIssue && (
           <button
             onClick={() => {
               if (window.confirm(t.deleteIssueConfirm)) {
                 onDeleteIssue(issue.id);
-                onClose();
               }
             }}
             className={`p-2 rounded-xl transition-colors text-rose-400 hover:bg-rose-500/10`}
@@ -92,7 +106,9 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
         )}
         <button
           onClick={onClose}
+          aria-label={analyzing ? t.closeWhileAnalyzing : t.closeIssue}
           className={`p-2 rounded-xl transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
+          title={analyzing ? t.closeWhileAnalyzing : t.closeIssue}
         >
           <X className="w-5 h-5" />
         </button>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Issue, GitRepo, ModelConfig, BranchPrefixConfig, SubRequirement } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
@@ -14,10 +15,18 @@ import { IssueChatTab } from './IssueChatTab';
 import { IssueSpecTab } from './IssueSpecTab';
 import { IssueConsoleTab } from './IssueConsoleTab';
 import { IssueReviewTab } from './IssueReviewTab';
+import { IssueSessionChip } from './IssueSessionChip';
+
+export const ISSUE_SESSION_DOCK_ID = 'vc-issue-session-dock';
 
 interface IssueDetailModalProps {
   isOpen: boolean;
-  onClose: () => void;
+  minimized?: boolean;
+  onMinimize: () => void;
+  onRestore: () => void;
+  onDismiss: () => void;
+  onBusyChange?: (busy: boolean) => void;
+  onBackgroundSettled?: (result: 'success' | 'error' | 'cancelled') => void;
   issue: Issue;
   gitRepos: GitRepo[];
   modelConfig: ModelConfig;
@@ -33,7 +42,12 @@ interface IssueDetailModalProps {
 
 export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   isOpen,
-  onClose,
+  minimized = false,
+  onMinimize,
+  onRestore,
+  onDismiss,
+  onBusyChange,
+  onBackgroundSettled,
   issue,
   gitRepos,
   modelConfig,
@@ -60,6 +74,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   const [reworkScope, setReworkScope] = useState<string>('all');
   const [exporting, setExporting] = useState(false);
   const [exportHint, setExportHint] = useState('');
+  const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const splitIssue = hasSubRequirements(issue);
@@ -99,11 +114,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     associatedRepos,
   });
 
-  // Automatically switch active tab based on Issue status when modal opens
+  // Reset per-issue UI when this session first mounts / switches issue, not when hiding.
   useEffect(() => {
-    if (!isOpen) return;
     setEditingRepos(false);
-    setModelProcess({ entries: [], expanded: false });
     setSelectedScope('all');
     setReworkScope('all');
     setExportHint('');
@@ -116,7 +129,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     } else if (issue.status === 'in_review' || issue.status === 'completed') {
       setActiveTab('review');
     }
-  }, [isOpen, issue.id, issue.status, setModelProcess]);
+  }, [issue.id]);
 
   useEffect(() => {
     const spec = visibleSpec(issue, selectedScope);
@@ -129,7 +142,63 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [visibleMessages, activeTab]);
 
-  if (!isOpen) return null;
+  useEffect(() => {
+    onBusyChange?.(isSending);
+  }, [isSending, onBusyChange]);
+
+  const isOpenRef = useRef(isOpen);
+  isOpenRef.current = isOpen;
+  const sendingRef = useRef(isSending);
+  useEffect(() => {
+    const wasSending = sendingRef.current;
+    sendingRef.current = isSending;
+    if (!wasSending || isSending || isOpenRef.current) return;
+    const cancelled = chatError === t.requestCancelled;
+    onBackgroundSettled?.(cancelled ? 'cancelled' : chatError ? 'error' : 'success');
+  }, [isSending, chatError, onBackgroundSettled, t.requestCancelled]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (isSending) onMinimize();
+      else onDismiss();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isOpen, isSending, onMinimize, onDismiss]);
+
+  const handleHeaderClose = () => {
+    if (isSending) onMinimize();
+    else onDismiss();
+  };
+
+  const handleChipDismiss = () => {
+    abortRef.current?.abort();
+    onDismiss();
+  };
+
+  useEffect(() => {
+    setDockEl(document.getElementById(ISSUE_SESSION_DOCK_ID));
+  }, [isOpen, minimized, isSending]);
+  const showChip = !isOpen && (minimized || isSending);
+  const chip =
+    showChip && dockEl
+      ? createPortal(
+          <IssueSessionChip
+            title={issue.title}
+            busy={isSending}
+            error={chatError || undefined}
+            lang={lang}
+            themeStyle={themeStyle}
+            onRestore={onRestore}
+            onDismiss={handleChipDismiss}
+          />,
+          dockEl
+        )
+      : null;
+
+  if (!isOpen) return chip;
 
   const toggleAssociatedRepo = (repoId: string) => {
     if (!canEditRepos) return;
@@ -243,13 +312,21 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 sm:p-6">
-      <div className={`w-full max-w-5xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh] ${themeConfig.modalBg}`}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 sm:p-6"
+      onClick={onMinimize}
+    >
+      <div
+        className={`w-full max-w-5xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh] ${themeConfig.modalBg}`}
+        onClick={(e) => e.stopPropagation()}
+      >
         <IssueDetailHeader
           issue={issue}
           lang={lang}
           themeStyle={themeStyle}
-          onClose={onClose}
+          onClose={handleHeaderClose}
+          onMinimize={onMinimize}
+          analyzing={isSending}
           onStartAutoDev={onStartAutoDev}
           onDeleteIssue={onDeleteIssue}
           setActiveTab={setActiveTab}

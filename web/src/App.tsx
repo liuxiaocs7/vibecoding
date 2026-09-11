@@ -6,7 +6,7 @@ import { THEME_CONFIGS } from './lib/theme';
 import { api, subscribeJobEvents } from './lib/api';
 import { hasSubRequirements, specReadyForDev } from './lib/subreq';
 import { KanbanBoard } from './components/KanbanBoard';
-import { IssueDetailModal } from './components/IssueDetailModal';
+import { IssueDetailModal, ISSUE_SESSION_DOCK_ID } from './components/IssueDetailModal';
 import { ProjectModal } from './components/ProjectModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { GlobalSettingsModal } from './components/GlobalSettingsModal';
@@ -47,7 +47,11 @@ export default function App() {
   const [llmReady, setLlmReady] = useState(false);
   const [toast, setToast] = useState<{ type: 'error' | 'info' | 'success'; text: string } | null>(null);
 
-  const [selectedIssue, setSelectedIssue] = useState<Issue | null>(null);
+  const [selectedIssueId, setSelectedIssueId] = useState<string | null>(null);
+  const [mountedIssueIds, setMountedIssueIds] = useState<string[]>([]);
+  const [minimizedIssueIds, setMinimizedIssueIds] = useState<string[]>([]);
+  const [busyIssueIds, setBusyIssueIds] = useState<Record<string, boolean>>({});
+  const [sessionIssues, setSessionIssues] = useState<Record<string, Issue>>({});
   const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [isCreateIssueModalOpen, setIsCreateIssueModalOpen] = useState(false);
@@ -67,7 +71,6 @@ export default function App() {
   const refreshIssues = useCallback(async (projectId?: string) => {
     const list = await api.listIssues(projectId);
     setIssues(list);
-    setSelectedIssue((prev) => (prev ? list.find((i) => i.id === prev.id) || prev : null));
   }, []);
 
   useEffect(() => {
@@ -164,7 +167,7 @@ export default function App() {
 
   const patchIssueLocal = useCallback((updated: Issue) => {
     setIssues((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
-    setSelectedIssue((prev) => (prev?.id === updated.id ? updated : prev));
+    setSessionIssues((prev) => (prev[updated.id] ? { ...prev, [updated.id]: updated } : prev));
   }, []);
 
   const handleSaveGlobalConfig = async (newConfig: ModelConfig) => {
@@ -298,7 +301,10 @@ export default function App() {
           showToast('error', ev.error || t.autoDevFailed);
         }
         setIssues((prev) => prev.map(apply));
-        setSelectedIssue((prev) => (prev ? apply(prev) : prev));
+        setSessionIssues((prev) => {
+          const cur = prev[issueId];
+          return cur ? { ...prev, [issueId]: apply(cur) } : prev;
+        });
 
         if (ev.type === 'done' || ev.type === 'error' || ev.status === 'cancelled' || ev.status === 'failed') {
           autoDevJobs.current.delete(issueId);
@@ -307,7 +313,12 @@ export default function App() {
           try {
             const fresh = await api.listIssues(activeProjectId);
             setIssues(fresh);
-            setSelectedIssue((prev) => (prev ? fresh.find((i) => i.id === prev.id) || prev : null));
+            setSessionIssues((prev) => {
+              const cur = prev[issueId];
+              if (!cur) return prev;
+              const updated = fresh.find((i) => i.id === issueId);
+              return updated ? { ...prev, [issueId]: updated } : prev;
+            });
           } catch {
             /* ignore */
           }
@@ -364,11 +375,59 @@ export default function App() {
     await handleUpdateIssue({ ...target, status: newStatus, updatedAt: new Date().toISOString() });
   };
 
+  const analyzingIssueIds = new Set(
+    Object.entries(busyIssueIds)
+      .filter(([, busy]) => busy)
+      .map(([id]) => id)
+  );
+
+  const dismissIssueSession = useCallback((issueId: string) => {
+    setSelectedIssueId((prev) => (prev === issueId ? null : prev));
+    setMountedIssueIds((ids) => ids.filter((id) => id !== issueId));
+    setMinimizedIssueIds((ids) => ids.filter((id) => id !== issueId));
+    setBusyIssueIds((prev) => {
+      if (!(issueId in prev)) return prev;
+      const next = { ...prev };
+      delete next[issueId];
+      return next;
+    });
+    setSessionIssues((prev) => {
+      if (!prev[issueId]) return prev;
+      const next = { ...prev };
+      delete next[issueId];
+      return next;
+    });
+  }, []);
+
+  const openIssue = useCallback(
+    (issue: Issue) => {
+      const previousId = selectedIssueId;
+      setSessionIssues((prev) => ({ ...prev, [issue.id]: issue }));
+      if (previousId && previousId !== issue.id) {
+        if (busyIssueIds[previousId]) {
+          setMinimizedIssueIds((ids) => (ids.includes(previousId) ? ids : [...ids, previousId]));
+        } else if (!minimizedIssueIds.includes(previousId)) {
+          setMountedIssueIds((mounted) => mounted.filter((id) => id !== previousId));
+        }
+      }
+      setSelectedIssueId(issue.id);
+      setMinimizedIssueIds((ids) => ids.filter((id) => id !== issue.id));
+      setMountedIssueIds((ids) => (ids.includes(issue.id) ? ids : [...ids, issue.id]));
+    },
+    [selectedIssueId, busyIssueIds, minimizedIssueIds]
+  );
+
+  const minimizeIssue = useCallback((issueId: string) => {
+    setSelectedIssueId((prev) => (prev === issueId ? null : prev));
+    setMinimizedIssueIds((ids) => (ids.includes(issueId) ? ids : [...ids, issueId]));
+    setMountedIssueIds((ids) => (ids.includes(issueId) ? ids : [...ids, issueId]));
+  }, []);
+
   const handleDeleteIssue = async (issueId: string) => {
     try {
       await api.deleteIssue(issueId);
       setIssues((prev) => prev.filter((i) => i.id !== issueId));
-      if (selectedIssue?.id === issueId) setSelectedIssue(null);
+      dismissIssueSession(issueId);
     } catch (err: any) {
       showToast('error', err.message);
     }
@@ -634,10 +693,11 @@ export default function App() {
             issues={activeIssues}
             gitRepos={activeProject.gitRepos || []}
             branchPrefixConfig={activeProject.branchPrefixConfig}
-            onSelectIssue={(issue) => setSelectedIssue(issue)}
+            onSelectIssue={openIssue}
             onStartAutoDev={handleStartAutoDev}
             onMoveColumn={handleMoveColumn}
             onOpenCreateIssue={() => setIsCreateIssueModalOpen(true)}
+            analyzingIssueIds={analyzingIssueIds}
             lang={language}
             themeStyle={themeStyle}
           />
@@ -657,23 +717,49 @@ export default function App() {
         )}
       </main>
 
-      {selectedIssue && (
-        <IssueDetailModal
-          isOpen={!!selectedIssue}
-          onClose={() => setSelectedIssue(null)}
-          issue={selectedIssue}
-          gitRepos={activeProject?.gitRepos || []}
-          modelConfig={effectiveModelConfig}
-          branchPrefixConfig={activeProject?.branchPrefixConfig}
-          onUpdateIssue={handleUpdateIssue}
-          onStartAutoDev={handleStartAutoDev}
-          onCancelAutoDev={handleCancelAutoDev}
-          onDeleteIssue={handleDeleteIssue}
-          projectId={activeProject?.id}
-          lang={language}
-          themeStyle={themeStyle}
-        />
-      )}
+      <div
+        id={ISSUE_SESSION_DOCK_ID}
+        className="fixed bottom-4 right-4 z-[70] flex flex-col-reverse items-end gap-2 pointer-events-none"
+      />
+
+      {mountedIssueIds.map((issueId) => {
+        const issue = issues.find((i) => i.id === issueId) || sessionIssues[issueId];
+        if (!issue) return null;
+        return (
+          <IssueDetailModal
+            key={issueId}
+            isOpen={selectedIssueId === issueId}
+            minimized={minimizedIssueIds.includes(issueId)}
+            onMinimize={() => minimizeIssue(issueId)}
+            onRestore={() => openIssue(issue)}
+            onDismiss={() => dismissIssueSession(issueId)}
+            onBusyChange={(busy) =>
+              setBusyIssueIds((prev) => (prev[issueId] === busy ? prev : { ...prev, [issueId]: busy }))
+            }
+            onBackgroundSettled={(result) => {
+              if (result === 'cancelled') return;
+              showToast(
+                result === 'success' ? 'success' : 'error',
+                (result === 'success' ? t.analysisDoneBackground : t.analysisFailedBackground).replace(
+                  '{title}',
+                  issue.title
+                )
+              );
+            }}
+            issue={issue}
+            gitRepos={activeProject?.gitRepos || []}
+            modelConfig={effectiveModelConfig}
+            branchPrefixConfig={activeProject?.branchPrefixConfig}
+            onUpdateIssue={handleUpdateIssue}
+            onStartAutoDev={handleStartAutoDev}
+            onCancelAutoDev={handleCancelAutoDev}
+            onDeleteIssue={handleDeleteIssue}
+            projectId={activeProject?.id}
+            lang={language}
+            themeStyle={themeStyle}
+          />
+        );
+      })}
 
       {isProjectModalOpen && (
         <ProjectModal

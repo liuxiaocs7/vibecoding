@@ -2,7 +2,7 @@ import React from 'react';
 import { Issue, GitRepo, BranchPrefixConfig } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
-import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers, Paperclip } from 'lucide-react';
+import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers, Paperclip, Loader2 } from 'lucide-react';
 import { hasSubRequirements, readySubCount } from '../lib/subreq';
 
 interface IssueCardProps {
@@ -10,6 +10,7 @@ interface IssueCardProps {
   onClick: () => void;
   onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onMoveColumn: (issueId: string, newStatus: Issue['status']) => void;
+  analyzing?: boolean;
   gitRepos: GitRepo[];
   branchPrefixConfig?: BranchPrefixConfig;
   lang?: Language;
@@ -21,6 +22,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   onClick,
   onStartAutoDev,
   onMoveColumn,
+  analyzing,
   gitRepos,
   branchPrefixConfig,
   lang = 'en',
@@ -120,6 +122,18 @@ export const IssueCard: React.FC<IssueCardProps> = ({
               }`}>
                 <GitPullRequest className="w-3 h-3 text-purple-400 shrink-0" />
                 <span className="truncate">{t.reviewPending}</span>
+              </span>
+            )}
+            {analyzing && (
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 shrink-0 ${
+                  isLight
+                    ? 'bg-indigo-100 text-indigo-900 border-indigo-300'
+                    : 'bg-indigo-950/90 text-indigo-200 border-indigo-700/80'
+                }`}
+              >
+                <Loader2 className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />
+                <span className="truncate">{t.analyzingBadge}</span>
               </span>
             )}
             {(issue.attachments || []).length > 0 && (

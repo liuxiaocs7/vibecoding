@@ -13,6 +13,7 @@ interface KanbanBoardProps {
   onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onMoveColumn: (issueId: string, newStatus: IssueStatus) => void;
   onOpenCreateIssue: () => void;
+  analyzingIssueIds?: ReadonlySet<string>;
   lang?: Language;
   themeStyle?: ThemeStyle;
 }
@@ -25,6 +26,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onStartAutoDev,
   onMoveColumn,
   onOpenCreateIssue,
+  analyzingIssueIds,
   lang = 'en',
   themeStyle = 'glass',
 }) => {
@@ -147,6 +149,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                       onClick={() => onSelectIssue(issue)}
                       onStartAutoDev={onStartAutoDev}
                       onMoveColumn={onMoveColumn}
+                      analyzing={analyzingIssueIds?.has(issue.id)}
                       lang={lang}
                       themeStyle={themeStyle}
                     />
