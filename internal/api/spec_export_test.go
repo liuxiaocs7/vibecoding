@@ -3,6 +3,7 @@ package api
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -28,4 +29,24 @@ func TestSpecExportFileName(t *testing.T) {
 	if got := specExportFileName(""); got != "dev-spec.md" {
 		t.Fatalf("empty got %s", got)
 	}
+}
+
+func TestResumeUserPromptSkipsHintOnFirstTry(t *testing.T) {
+	got := resumeUserPrompt(specRequestBody{Prompt: "分析开发方案"}, "")
+	if got != "分析开发方案" {
+		t.Fatalf("first try should be unchanged, got %q", got)
+	}
+	resumed := resumeUserPrompt(specRequestBody{Prompt: "分析开发方案", Resume: true, ResumePartial: `{"title":"draft"}`}, "")
+	if resumed == "分析开发方案" || !containsAll(resumed, "分析开发方案", "draft") {
+		t.Fatalf("session retry missing draft: %q", resumed)
+	}
+}
+
+func containsAll(s string, parts ...string) bool {
+	for _, p := range parts {
+		if !strings.Contains(s, p) {
+			return false
+		}
+	}
+	return true
 }

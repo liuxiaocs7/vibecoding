@@ -217,6 +217,18 @@ export interface Issue {
   autoDevProgress: number; // 0 - 100
   prInfo?: PRInfo;
   reviewFeedback?: string;
+  pendingLlm?: PendingLLMSession;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface PendingLLMSession {
+  prompt: string;
+  scope?: string;
+  split?: boolean;
+  syncSpec?: boolean;
+  partial?: string;
+  error?: string;
+  attempts?: number;
+  updatedAt?: string;
 }

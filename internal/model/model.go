@@ -285,27 +285,41 @@ type IssueAttachment struct {
 	DataURL string `json:"dataUrl,omitempty"`
 }
 
+// PendingLLMSession remembers a timed-out / failed analysis so the user can
+// retry the same conversation or regenerate from scratch.
+type PendingLLMSession struct {
+	Prompt    string `json:"prompt"`
+	Scope     string `json:"scope,omitempty"`
+	Split     bool   `json:"split,omitempty"`
+	SyncSpec  bool   `json:"syncSpec,omitempty"`
+	Partial   string `json:"partial,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Attempts  int    `json:"attempts,omitempty"`
+	UpdatedAt string `json:"updatedAt,omitempty"`
+}
+
 type Issue struct {
-	ID                string            `json:"id"`
-	ProjectID         string            `json:"projectId"`
-	Title             string            `json:"title"`
-	Description       string            `json:"description"`
-	Attachments       []IssueAttachment `json:"attachments,omitempty"`
-	Priority          Priority          `json:"priority"`
-	Status            IssueStatus       `json:"status"`
-	AssociatedRepoIDs []string          `json:"associatedRepoIds"`
-	Assignee          string            `json:"assignee"`
-	ChatMessages      []ChatMessage     `json:"chatMessages"`
-	DevSpec           *DevSpec          `json:"devSpec,omitempty"`
-	SubRequirements   []SubRequirement  `json:"subRequirements,omitempty"`
-	CurrentSubID      string            `json:"currentSubId,omitempty"`
-	ReworkSubID       string            `json:"reworkSubId,omitempty"`
-	AutoDevLogs       []AutoDevLog      `json:"autoDevLogs"`
-	AutoDevProgress   int               `json:"autoDevProgress"`
-	PRInfo            *PRInfo           `json:"prInfo,omitempty"`
-	ReviewFeedback    string            `json:"reviewFeedback,omitempty"`
-	CreatedAt         string            `json:"createdAt"`
-	UpdatedAt         string            `json:"updatedAt"`
+	ID                string             `json:"id"`
+	ProjectID         string             `json:"projectId"`
+	Title             string             `json:"title"`
+	Description       string             `json:"description"`
+	Attachments       []IssueAttachment  `json:"attachments,omitempty"`
+	Priority          Priority           `json:"priority"`
+	Status            IssueStatus        `json:"status"`
+	AssociatedRepoIDs []string           `json:"associatedRepoIds"`
+	Assignee          string             `json:"assignee"`
+	ChatMessages      []ChatMessage      `json:"chatMessages"`
+	DevSpec           *DevSpec           `json:"devSpec,omitempty"`
+	SubRequirements   []SubRequirement   `json:"subRequirements,omitempty"`
+	CurrentSubID      string             `json:"currentSubId,omitempty"`
+	ReworkSubID       string             `json:"reworkSubId,omitempty"`
+	AutoDevLogs       []AutoDevLog       `json:"autoDevLogs"`
+	AutoDevProgress   int                `json:"autoDevProgress"`
+	PRInfo            *PRInfo            `json:"prInfo,omitempty"`
+	ReviewFeedback    string             `json:"reviewFeedback,omitempty"`
+	PendingLLM        *PendingLLMSession `json:"pendingLlm,omitempty"`
+	CreatedAt         string             `json:"createdAt"`
+	UpdatedAt         string             `json:"updatedAt"`
 }
 
 func (iss *Issue) HasSubRequirements() bool {

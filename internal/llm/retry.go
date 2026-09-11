@@ -10,11 +10,17 @@ import (
 	"github.com/ymhhh/go-common/logger"
 )
 
-// openAIMaxRetries is how many times to retry after the first failure (chat / test).
+// RequestTimeout bounds a single chat/spec HTTP handler (SSE included).
+const RequestTimeout = 20 * time.Minute
+
+// openAIMaxRetries is how many times to retry after the first failure (429 / 5xx).
 const openAIMaxRetries = 10
 
-// openAIMaxAttempts = first try + retries.
+// openAIMaxAttempts = first try + retries for rate-limit / server errors.
 const openAIMaxAttempts = 1 + openAIMaxRetries
+
+// openAITimeoutAttempts is first try + retries for client/gateway timeouts.
+const openAITimeoutAttempts = 3
 
 func isRetryableHTTPStatus(status int) bool {
 	switch status {
@@ -25,20 +31,53 @@ func isRetryableHTTPStatus(status int) bool {
 	}
 }
 
-func isRetryableNetErr(err error) bool {
+func isTimeoutLike(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) && ne.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") ||
+		strings.Contains(msg, "deadline exceeded") ||
+		strings.Contains(msg, "client.timeout")
+}
+
+func attemptsFor(status int, err error) int {
+	if status > 0 && isRetryableHTTPStatus(status) {
+		return openAIMaxAttempts
+	}
+	if isTimeoutLike(err) {
+		return openAITimeoutAttempts
+	}
+	return openAIMaxAttempts
+}
+
+func isRetryableNetErr(err error, reqCtx context.Context) bool {
+	if err == nil {
+		return false
+	}
+	// Caller cancelled or the handler deadline fired — another attempt in this request is useless.
+	if reqCtx != nil && reqCtx.Err() != nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) {
 		return false
 	}
 	var ne net.Error
 	if errors.As(err, &ne) {
 		return true
 	}
+	if isTimeoutLike(err) {
+		return true
+	}
 	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "timeout") ||
-		strings.Contains(msg, "connection reset") ||
+	return strings.Contains(msg, "connection reset") ||
 		strings.Contains(msg, "connection refused") ||
 		strings.Contains(msg, "temporary") ||
 		strings.Contains(msg, "eof") ||
@@ -83,12 +122,15 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func logRetry(endpoint, modelName string, attempt, status int, wait time.Duration, cause string) {
+func logRetry(endpoint, modelName string, attempt, max, status int, wait time.Duration, cause string) {
+	if max <= 0 {
+		max = openAIMaxAttempts
+	}
 	logger.L().WithFields(logger.Fields{
 		"url":     endpoint,
 		"model":   modelName,
 		"attempt": attempt,
-		"max":     openAIMaxAttempts,
+		"max":     max,
 		"status":  status,
 		"wait_ms": wait.Milliseconds(),
 		"cause":   truncate(cause, 160),

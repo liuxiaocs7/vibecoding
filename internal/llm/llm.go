@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,7 +22,18 @@ type Client struct {
 }
 
 func New() *Client {
-	return &Client{HTTP: &http.Client{Timeout: 180 * time.Second}}
+	transport := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           (&net.Dialer{Timeout: 30 * time.Second}).DialContext,
+		TLSHandshakeTimeout:   20 * time.Second,
+		ResponseHeaderTimeout: 3 * time.Minute, // first token may be slow on gateway models
+		IdleConnTimeout:       90 * time.Second,
+		ForceAttemptHTTP2:     true,
+	}
+	return &Client{HTTP: &http.Client{
+		Timeout:   0, // body/SSE is bounded by the request context (handlers use RequestTimeout)
+		Transport: transport,
+	}}
 }
 
 type ChatMessage struct {
@@ -172,9 +184,10 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 	for attempt := 1; attempt <= openAIMaxAttempts; attempt++ {
 		raw, status, err = doReq(payload)
 		if err != nil {
-			if attempt < openAIMaxAttempts && isRetryableNetErr(err) {
+			max := attemptsFor(status, err)
+			if attempt < max && isRetryableNetErr(err, ctx) {
 				wait := retryBackoff(attempt, 0)
-				logRetry(endpoint, modelName, attempt, 0, wait, err.Error())
+				logRetry(endpoint, modelName, attempt, max, 0, wait, err.Error())
 				if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
 					return "", formatOpenAPIErr(endpoint, modelName, 0, sleepErr.Error())
 				}
@@ -193,12 +206,12 @@ func (c *Client) chatOpenAI(ctx context.Context, req ChatRequest) (string, error
 			}
 			payload = retryBody
 			tempStripped = true
-			logRetry(endpoint, modelName, attempt, status, 0, "strip temperature and retry")
+			logRetry(endpoint, modelName, attempt, openAIMaxAttempts, status, 0, "strip temperature and retry")
 			continue
 		}
 		if status >= 300 && isRetryableHTTPStatus(status) && attempt < openAIMaxAttempts {
 			wait := retryBackoff(attempt, status)
-			logRetry(endpoint, modelName, attempt, status, wait, truncate(string(raw), 160))
+			logRetry(endpoint, modelName, attempt, openAIMaxAttempts, status, wait, truncate(string(raw), 160))
 			if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
 				return "", formatOpenAPIErr(endpoint, modelName, status, sleepErr.Error())
 			}

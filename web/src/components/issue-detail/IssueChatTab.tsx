@@ -1,10 +1,11 @@
 import React, { RefObject } from 'react';
-import { Issue, ChatMessage } from '../../types';
+import { Issue, ChatMessage, PendingLLMSession } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { MarkdownView } from '../../lib/markdown';
 import { SubRequirementBar } from '../SubRequirementBar';
-import { ModelProcessState } from './useIssueChat';
+import { ModelProcessState, SendMessageOpts } from './useIssueChat';
+import { LLMRecoveryBar } from './LLMRecoveryBar';
 import {
   Sparkles,
   Bot,
@@ -34,10 +35,10 @@ interface IssueChatTabProps {
   setModelProcess: React.Dispatch<React.SetStateAction<ModelProcessState>>;
   abortRef: RefObject<AbortController | null>;
   messagesEndRef: RefObject<HTMLDivElement | null>;
-  handleSendMessage: (
-    customPrompt?: string,
-    opts?: { forceSpecSync?: boolean; split?: boolean; scope?: string }
-  ) => Promise<void>;
+  handleSendMessage: (customPrompt?: string, opts?: SendMessageOpts) => Promise<void>;
+  pendingLlm?: PendingLLMSession | null;
+  onRetrySession?: () => void;
+  onRegenerate?: () => void;
 }
 
 export const IssueChatTab: React.FC<IssueChatTabProps> = ({
@@ -57,6 +58,9 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
   abortRef,
   messagesEndRef,
   handleSendMessage,
+  pendingLlm,
+  onRetrySession,
+  onRegenerate,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
   const t = getTranslation(lang);
@@ -157,9 +161,17 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             </button>
           </div>
         )}
-        {chatError && (
+        {chatError && !pendingLlm && (
           <div className="text-xs text-rose-500 px-2 select-text">{chatError}</div>
         )}
+        <LLMRecoveryBar
+          session={pendingLlm || null}
+          lang={lang}
+          themeStyle={themeStyle}
+          busy={isSending}
+          onRetrySession={() => onRetrySession?.()}
+          onRegenerate={() => onRegenerate?.()}
+        />
         <div ref={messagesEndRef} />
       </div>
 

@@ -1,6 +1,8 @@
 package llm
 
 import (
+	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -22,11 +24,27 @@ func TestRetryBackoff429GrowsAndCaps(t *testing.T) {
 	}
 }
 
-func TestIsRetryableHTTPStatus(t *testing.T) {
-	if !isRetryableHTTPStatus(429) {
-		t.Fatal("429 should be retryable")
+func TestIsRetryableNetErrClientTimeoutWhileCtxAlive(t *testing.T) {
+	ctx := context.Background()
+	err := fmt.Errorf("OpenAPI request failed [200] url=http://x: context deadline exceeded (Client.Timeout or context cancellation while reading body)")
+	if !isRetryableNetErr(err, ctx) {
+		t.Fatal("client timeout should be retryable while request context is alive")
 	}
-	if isRetryableHTTPStatus(404) {
-		t.Fatal("404 should not be retryable")
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if isRetryableNetErr(err, canceled) {
+		t.Fatal("should not retry after caller context is done")
+	}
+	if isRetryableNetErr(context.Canceled, ctx) {
+		t.Fatal("explicit cancel should not be retryable")
+	}
+}
+
+func TestAttemptsForTimeoutVsRateLimit(t *testing.T) {
+	if attemptsFor(429, nil) != openAIMaxAttempts {
+		t.Fatalf("429 attempts=%d", attemptsFor(429, nil))
+	}
+	if attemptsFor(0, fmt.Errorf("context deadline exceeded (Client.Timeout)")) != openAITimeoutAttempts {
+		t.Fatalf("timeout attempts=%d", attemptsFor(0, fmt.Errorf("timeout")))
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/ymhhh/vibecoding/internal/gitx"
 	"github.com/ymhhh/vibecoding/internal/llm"
@@ -55,6 +54,9 @@ type chatBody struct {
 	GenerateSpec     bool                `json:"generateSpec"`
 	ProjectID        string              `json:"projectId"`
 	IssueID          string              `json:"issueId"`
+	ResumePartial    string              `json:"resumePartial,omitempty"`
+	FreshStart       bool                `json:"freshStart,omitempty"`
+	Resume           bool                `json:"resume,omitempty"`
 }
 
 type repoRef struct {
@@ -106,11 +108,14 @@ Prefer structured sections: Summary, Architecture, Target Files, Implementation 
 		msgs = append(msgs, llm.ChatMessage{Role: role, Content: m.Text})
 	}
 	if body.Prompt != "" {
-		msgs = append(msgs, llm.ChatMessage{Role: "user", Content: body.Prompt})
+		prompt := body.Prompt
+		if body.Resume || body.FreshStart || strings.TrimSpace(body.ResumePartial) != "" {
+			prompt = llm.ApplyResumeHint(body.Prompt, body.ResumePartial, body.FreshStart)
+		}
+		msgs = append(msgs, llm.ChatMessage{Role: "user", Content: prompt})
 	}
 
-	// Allow rate-limit retries (up to 10) with backoff.
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.RequestTimeout)
 	defer cancel()
 	chatReq := llm.ChatRequest{
 		ModelConfig: cfg,
@@ -186,7 +191,7 @@ func (s *Server) handleTestOpenAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Connectivity test shares OpenAPI retries (10) for 429 rate limits.
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.RequestTimeout)
 	defer cancel()
 	reply, err := s.LLM.TestOpenAPI(ctx, baseURL, key, modelName)
 	if err != nil {

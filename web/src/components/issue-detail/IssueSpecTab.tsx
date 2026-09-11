@@ -1,10 +1,12 @@
 import React from 'react';
-import { Issue, SubRequirement, DevSpec } from '../../types';
+import { Issue, SubRequirement, DevSpec, PendingLLMSession } from '../../types';
 import { Language, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { MarkdownView } from '../../lib/markdown';
 import { SubRequirementBar } from '../SubRequirementBar';
 import { FileText, Sparkles, Loader2, Download, Edit3 } from 'lucide-react';
+import { LLMRecoveryBar } from './LLMRecoveryBar';
+import { SendMessageOpts } from './useIssueChat';
 
 interface IssueSpecTabProps {
   issue: Issue;
@@ -22,13 +24,14 @@ interface IssueSpecTabProps {
   exporting: boolean;
   exportHint: string;
   chatError: string;
+  isSending?: boolean;
   setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
-  handleSendMessage: (
-    customPrompt?: string,
-    opts?: { forceSpecSync?: boolean; split?: boolean; scope?: string }
-  ) => Promise<void>;
+  handleSendMessage: (customPrompt?: string, opts?: SendMessageOpts) => Promise<void>;
   handleExportDevSpec: () => Promise<void>;
   onUpdateIssue: (updatedIssue: Issue) => void;
+  pendingLlm?: PendingLLMSession | null;
+  onRetrySession?: () => void;
+  onRegenerate?: () => void;
 }
 
 export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
@@ -47,10 +50,14 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   exporting,
   exportHint,
   chatError,
+  isSending,
   setActiveTab,
   handleSendMessage,
   handleExportDevSpec,
   onUpdateIssue,
+  pendingLlm,
+  onRetrySession,
+  onRegenerate,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
 
@@ -68,6 +75,23 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
           themeStyle={themeStyle}
         />
       )}
+      {isSending && (
+        <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-300">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>{lang === 'zh' ? '模型处理中…' : 'Model is working…'}</span>
+        </div>
+      )}
+      {chatError && !pendingLlm && (
+        <div className="text-[11px] text-rose-500 select-text">{chatError}</div>
+      )}
+      <LLMRecoveryBar
+        session={pendingLlm || null}
+        lang={lang}
+        themeStyle={themeStyle}
+        busy={!!isSending}
+        onRetrySession={() => onRetrySession?.()}
+        onRegenerate={() => onRegenerate?.()}
+      />
       {!currentSpec?.rawMarkdown && !currentSpec?.summary ? (
         <div className={`p-12 text-center border-2 border-dashed rounded-2xl ${themeConfig.subtleBorder} ${themeConfig.cardBg}`}>
           <FileText className={`w-12 h-12 mx-auto mb-3 ${themeConfig.textMuted}`} />
@@ -154,9 +178,6 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
               <div className="text-[11px] text-emerald-600 dark:text-emerald-400 select-text break-all">
                 {exportHint}
               </div>
-            )}
-            {chatError && (
-              <div className="text-[11px] text-rose-500 select-text">{chatError}</div>
             )}
           </div>
 

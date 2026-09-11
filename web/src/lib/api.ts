@@ -21,6 +21,9 @@ type SpecStreamBody = {
   messages?: unknown[];
   subRequirementId?: string;
   scope?: 'all' | 'sub';
+  resumePartial?: string;
+  freshStart?: boolean;
+  resume?: boolean;
 };
 
 type SpecStreamResult = {

@@ -1,6 +1,29 @@
 import { ChatMessage, ModelConfig } from '../types';
 import { readSSE } from './stream';
 
+export const LLM_AUTO_ATTEMPTS = 3;
+
+export function isRetryableLLMError(err: unknown): boolean {
+  const msg = String((err as { message?: string })?.message || err || '').toLowerCase();
+  if (!msg) return false;
+  if (msg.includes('401') || msg.includes('403') || msg.includes('invalid api')) return false;
+  return (
+    msg.includes('timeout') ||
+    msg.includes('deadline exceeded') ||
+    msg.includes('client.timeout') ||
+    msg.includes('429') ||
+    msg.includes('502') ||
+    msg.includes('503') ||
+    msg.includes('504') ||
+    msg.includes('econnreset') ||
+    msg.includes('failed to fetch') ||
+    msg.includes('network') ||
+    msg.includes('empty model') ||
+    msg.includes('stream ended') ||
+    msg.includes('eof')
+  );
+}
+
 export interface RepoRef {
   name: string;
   path: string;
@@ -17,6 +40,9 @@ export interface ChatRequestParams {
   generateSpec?: boolean;
   projectId?: string;
   issueId?: string;
+  resumePartial?: string;
+  freshStart?: boolean;
+  resume?: boolean;
   signal?: AbortSignal;
   onDelta?: (chunk: string) => void;
 }
@@ -37,6 +63,9 @@ export async function sendLLMChat(params: ChatRequestParams): Promise<string> {
       generateSpec: params.generateSpec,
       projectId: params.projectId,
       issueId: params.issueId,
+      resumePartial: params.resumePartial,
+      freshStart: params.freshStart,
+      resume: params.resume,
     }),
     signal: params.signal,
   });

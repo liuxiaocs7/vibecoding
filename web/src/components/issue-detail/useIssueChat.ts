@@ -1,7 +1,7 @@
-import { useState, useRef } from 'react';
-import { Issue, GitRepo, ModelConfig, ChatMessage } from '../../types';
+import { useState, useRef, useEffect } from 'react';
+import { Issue, GitRepo, ModelConfig, ChatMessage, PendingLLMSession } from '../../types';
 import { Language, getTranslation } from '../../lib/i18n';
-import { sendLLMChat } from '../../lib/llm';
+import { sendLLMChat, isRetryableLLMError, LLM_AUTO_ATTEMPTS } from '../../lib/llm';
 import { api } from '../../lib/api';
 import { promptDescription } from '../../lib/attachments';
 
@@ -9,6 +9,30 @@ export type ModelProcessState = {
   entries: { id: string; at: string; prompt: string; body: string; status: 'running' | 'done' | 'error' }[];
   expanded: boolean;
 };
+
+export type SendMessageOpts = {
+  forceSpecSync?: boolean;
+  split?: boolean;
+  scope?: string;
+  resume?: 'session' | 'fresh';
+};
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(resolve, ms);
+    const onAbort = () => {
+      window.clearTimeout(timer);
+      const err = new Error('aborted');
+      err.name = 'AbortError';
+      reject(err);
+    };
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
 
 export function useIssueChat(params: {
   issue: Issue;
@@ -40,23 +64,38 @@ export function useIssueChat(params: {
   const [inputPrompt, setInputPrompt] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [chatError, setChatError] = useState('');
+  const [pendingLlm, setPendingLlm] = useState<PendingLLMSession | null>(issue.pendingLlm || null);
   /** Ephemeral model process traces — session only, never persisted. */
   const [modelProcess, setModelProcess] = useState<ModelProcessState>({ entries: [], expanded: false });
   const abortRef = useRef<AbortController | null>(null);
 
-  const handleSendMessage = async (
-    customPrompt?: string,
-    opts?: { forceSpecSync?: boolean; split?: boolean; scope?: string }
-  ) => {
-    const promptToUse = customPrompt || inputPrompt;
+  useEffect(() => {
+    setPendingLlm(issue.pendingLlm || null);
+    if (issue.pendingLlm?.error) setChatError(issue.pendingLlm.error);
+  }, [issue.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const persistPending = (next: PendingLLMSession | null, base: Issue) => {
+    setPendingLlm(next);
+    onUpdateIssue({ ...base, pendingLlm: next || undefined, updatedAt: new Date().toISOString() });
+  };
+
+  const handleSendMessage = async (customPrompt?: string, opts?: SendMessageOpts) => {
+    const resume = opts?.resume;
+    const session = resume ? pendingLlm : null;
+    const promptToUse = (resume ? session?.prompt : customPrompt) || customPrompt || inputPrompt;
     if (!promptToUse.trim()) return;
 
-    const scope = opts?.scope || selectedScope;
+    const scope = opts?.scope || session?.scope || selectedScope;
+    const split = opts?.split ?? session?.split ?? false;
     const targetingSub = splitIssue && scope !== 'all';
     const targetSub = targetingSub
       ? (issue.subRequirements || []).find((s) => s.id === scope)
       : undefined;
     const priorMessages = targetSub ? targetSub.chatMessages || [] : issue.chatMessages;
+
+    const last = priorMessages[priorMessages.length - 1];
+    const alreadyHaveUser =
+      !!resume || (last?.sender === 'user' && last.text === promptToUse);
 
     const userMsg: ChatMessage = {
       id: `msg-${Date.now()}`,
@@ -64,8 +103,7 @@ export function useIssueChat(params: {
       text: promptToUse,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
     };
-
-    const updatedMessages = [...priorMessages, userMsg];
+    const updatedMessages = alreadyHaveUser ? priorMessages : [...priorMessages, userMsg];
     const tempIssue = targetSub
       ? {
           ...issue,
@@ -74,8 +112,16 @@ export function useIssueChat(params: {
           ),
         }
       : { ...issue, chatMessages: updatedMessages };
-    onUpdateIssue(tempIssue);
-    setInputPrompt('');
+
+    if (!alreadyHaveUser) {
+      onUpdateIssue({ ...tempIssue, pendingLlm: undefined });
+    } else if (!resume && issue.pendingLlm) {
+      onUpdateIssue({ ...issue, pendingLlm: undefined, updatedAt: new Date().toISOString() });
+    }
+    if (!resume) {
+      setInputPrompt('');
+      setPendingLlm(null);
+    }
     setIsSending(true);
     setChatError('');
     abortRef.current?.abort();
@@ -84,7 +130,8 @@ export function useIssueChat(params: {
 
     const syncSpec =
       opts?.forceSpecSync ||
-      opts?.split ||
+      split ||
+      session?.syncSpec ||
       issue.status === 'requirements' ||
       issue.status === 'backlog';
 
@@ -113,12 +160,6 @@ export function useIssueChat(params: {
       }));
     };
 
-    let streamed = '';
-    const appendDelta = (chunk: string) => {
-      streamed += chunk;
-      patchProcess(streamed, 'running');
-    };
-
     const mergeChat = (base: Issue, messages: ChatMessage[]): Issue => {
       if (targetSub) {
         return {
@@ -131,100 +172,148 @@ export function useIssueChat(params: {
       return { ...base, chatMessages: messages };
     };
 
-    try {
-      if (syncSpec) {
-        const streamOpts = {
-          signal: ac.signal,
-          onDelta: appendDelta,
-          onStatus: () => {
-            if (!streamed) {
-              patchProcess(lang === 'zh' ? '正在请求模型…' : 'Calling model…', 'running');
-            }
-          },
-        };
-        const result = opts?.split
-          ? await api.splitIssueStream(issue.id, { prompt: promptToUse, messages: updatedMessages }, streamOpts)
-          : await api.generateSpecStream(
-              issue.id,
-              {
-                prompt: promptToUse,
-                messages: updatedMessages,
-                scope: targetingSub ? 'sub' : splitIssue ? 'all' : undefined,
-                subRequirementId: targetingSub ? scope : undefined,
-              },
-              streamOpts
-            );
-        const { spec, text, chatReply, process, subRequirements } = result;
-        const reply =
-          chatReply ||
-          text ||
-          (lang === 'zh' ? '已更新待开发文档。' : 'Dev Spec updated.');
-        patchProcess(process || streamed || text || reply, 'done');
-        const aiMsg: ChatMessage = {
-          id: `msg-${Date.now() + 1}`,
-          sender: 'ai',
-          text: reply,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        };
-        const nextSubs = subRequirements || tempIssue.subRequirements;
-        onUpdateIssue({
-          ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
-          devSpec: spec || tempIssue.devSpec,
-          subRequirements: nextSubs,
-          updatedAt: new Date().toISOString(),
-        });
-        if (spec?.rawMarkdown) setSpecMarkdown(spec.rawMarkdown);
-        if (opts?.split) setSelectedScope('all');
-      } else {
-        const responseText = await sendLLMChat({
-          prompt: promptToUse,
-          messages: updatedMessages,
-          modelConfig,
-          issueTitle: issue.title,
-          issueDescription: promptDescription(issue),
-          associatedRepos: associatedRepos.map((r) => ({
-            name: r.name,
-            path: r.path,
-            defaultBranch: r.defaultBranch,
-          })),
-          generateSpec: false,
-          projectId,
-          issueId: issue.id,
-          signal: ac.signal,
-          onDelta: appendDelta,
-        });
+    let lastPartial = resume === 'fresh' ? '' : session?.partial || '';
 
-        patchProcess(streamed || responseText, 'done');
-        const aiMsg: ChatMessage = {
-          id: `msg-${Date.now() + 1}`,
-          sender: 'ai',
-          text: responseText,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    try {
+      for (let attempt = 1; attempt <= LLM_AUTO_ATTEMPTS; attempt++) {
+        let streamed = '';
+        const appendDelta = (chunk: string) => {
+          streamed += chunk;
+          patchProcess(streamed, 'running');
         };
-        onUpdateIssue({
-          ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
-          updatedAt: new Date().toISOString(),
-        });
+        const resumePartial = resume === 'fresh' && attempt === 1 ? '' : lastPartial;
+        const freshStart = resume === 'fresh' && attempt === 1;
+        const resumeSession = !!resume || attempt > 1;
+        if (attempt > 1) {
+          patchProcess(
+            t.llmRetrying.replace('{n}', String(attempt)).replace('{max}', String(LLM_AUTO_ATTEMPTS)),
+            'running'
+          );
+          await sleep(1500 * (attempt - 1), ac.signal);
+        }
+
+        try {
+          if (syncSpec) {
+            const streamOpts = {
+              signal: ac.signal,
+              onDelta: appendDelta,
+              onStatus: () => {
+                if (!streamed) {
+                  patchProcess(lang === 'zh' ? '正在请求模型…' : 'Calling model…', 'running');
+                }
+              },
+            };
+            const body = {
+              prompt: promptToUse,
+              messages: updatedMessages,
+              scope: targetingSub ? ('sub' as const) : splitIssue ? ('all' as const) : undefined,
+              subRequirementId: targetingSub ? scope : undefined,
+              resumePartial: resumePartial || undefined,
+              freshStart: freshStart || undefined,
+              resume: resumeSession || undefined,
+            };
+            const result = split
+              ? await api.splitIssueStream(issue.id, body, streamOpts)
+              : await api.generateSpecStream(issue.id, body, streamOpts);
+            const { spec, text, chatReply, process, subRequirements } = result;
+            const reply =
+              chatReply ||
+              text ||
+              (lang === 'zh' ? '已更新待开发文档。' : 'Dev Spec updated.');
+            patchProcess(process || streamed || text || reply, 'done');
+            const aiMsg: ChatMessage = {
+              id: `msg-${Date.now() + 1}`,
+              sender: 'ai',
+              text: reply,
+              timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            };
+            const nextSubs = subRequirements || tempIssue.subRequirements;
+            const saved: Issue = {
+              ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
+              devSpec: spec || tempIssue.devSpec,
+              subRequirements: nextSubs,
+              pendingLlm: undefined,
+              updatedAt: new Date().toISOString(),
+            };
+            setPendingLlm(null);
+            onUpdateIssue(saved);
+            if (spec?.rawMarkdown) setSpecMarkdown(spec.rawMarkdown);
+            if (split) setSelectedScope('all');
+            return;
+          }
+
+          const responseText = await sendLLMChat({
+            prompt: promptToUse,
+            messages: updatedMessages,
+            modelConfig,
+            issueTitle: issue.title,
+            issueDescription: promptDescription(issue),
+            associatedRepos: associatedRepos.map((r) => ({
+              name: r.name,
+              path: r.path,
+              defaultBranch: r.defaultBranch,
+            })),
+            generateSpec: false,
+            projectId,
+            issueId: issue.id,
+            resumePartial: resumePartial || undefined,
+            freshStart: freshStart || undefined,
+            resume: resumeSession || undefined,
+            signal: ac.signal,
+            onDelta: appendDelta,
+          });
+
+          patchProcess(streamed || responseText, 'done');
+          const aiMsg: ChatMessage = {
+            id: `msg-${Date.now() + 1}`,
+            sender: 'ai',
+            text: responseText,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+          setPendingLlm(null);
+          onUpdateIssue({
+            ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
+            pendingLlm: undefined,
+            updatedAt: new Date().toISOString(),
+          });
+          return;
+        } catch (err: unknown) {
+          lastPartial = streamed || lastPartial;
+          const name = (err as { name?: string })?.name;
+          if (name === 'AbortError') throw err;
+          if (attempt < LLM_AUTO_ATTEMPTS && isRetryableLLMError(err)) {
+            continue;
+          }
+          throw err;
+        }
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') {
         setChatError(t.requestCancelled);
         patchProcess(t.requestCancelled, 'error');
       } else {
-        setChatError(err.message || t.llmError);
-        patchProcess(err.message || t.llmError, 'error');
-        const errMsg: ChatMessage = {
-          id: `msg-${Date.now() + 1}`,
-          sender: 'system',
-          text: `⚠️ ${t.llmError}: ${err.message}`,
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        const message = err?.message || t.llmError;
+        setChatError(message);
+        patchProcess(`${t.llmRetryGiveUp}\n${message}`, 'error');
+        const pending: PendingLLMSession = {
+          prompt: promptToUse,
+          scope,
+          split,
+          syncSpec,
+          partial: lastPartial.slice(0, 12000),
+          error: message,
+          attempts: LLM_AUTO_ATTEMPTS,
+          updatedAt: new Date().toISOString(),
         };
-        onUpdateIssue(mergeChat(tempIssue, [...updatedMessages, errMsg]));
+        persistPending(pending, mergeChat(tempIssue, updatedMessages));
       }
     } finally {
       setIsSending(false);
     }
   };
+
+  const handleRetrySession = () => handleSendMessage(undefined, { resume: 'session' });
+  const handleRegenerate = () => handleSendMessage(undefined, { resume: 'fresh' });
 
   return {
     inputPrompt,
@@ -236,5 +325,8 @@ export function useIssueChat(params: {
     setModelProcess,
     abortRef,
     handleSendMessage,
+    pendingLlm,
+    handleRetrySession,
+    handleRegenerate,
   };
 }

@@ -161,15 +161,15 @@ func (c *Client) streamOpenAI(ctx context.Context, req ChatRequest, onDelta func
 				}
 				payload = retryBody
 				tempStripped = true
-				logRetry(endpoint, modelName, attempt, status, 0, "strip temperature and retry")
+				logRetry(endpoint, modelName, attempt, openAIMaxAttempts, status, 0, "strip temperature and retry")
 				continue
 			}
-			retryable := (status >= 300 && isRetryableHTTPStatus(status)) ||
-				(status == 0 && isRetryableNetErr(err))
-			// Do not retry after SSE bytes were already delivered.
-			if retryable && full == "" && attempt < openAIMaxAttempts {
+			retryable := (status >= 300 && isRetryableHTTPStatus(status)) || isRetryableNetErr(err, ctx)
+			max := attemptsFor(status, err)
+			// Do not retry after SSE bytes were already delivered (would duplicate in the UI).
+			if retryable && full == "" && attempt < max {
 				wait := retryBackoff(attempt, status)
-				logRetry(endpoint, modelName, attempt, status, wait, err.Error())
+				logRetry(endpoint, modelName, attempt, max, status, wait, err.Error())
 				if sleepErr := sleepCtx(ctx, wait); sleepErr != nil {
 					return "", formatOpenAPIErr(endpoint, modelName, status, sleepErr.Error())
 				}

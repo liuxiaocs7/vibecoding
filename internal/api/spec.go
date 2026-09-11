@@ -21,6 +21,9 @@ type specRequestBody struct {
 	Messages         []model.ChatMessage `json:"messages"`
 	SubRequirementID string              `json:"subRequirementId"`
 	Scope            string              `json:"scope"` // all | sub | ""
+	ResumePartial    string              `json:"resumePartial,omitempty"`
+	FreshStart       bool                `json:"freshStart,omitempty"`
+	Resume           bool                `json:"resume,omitempty"`
 }
 
 func (s *Server) completeLLMJSON(ctx context.Context, cfg model.ModelConfig, system string, msgs []llm.ChatMessage, onDelta func(string)) (string, error) {
@@ -59,7 +62,7 @@ func (s *Server) completeLLMJSON(ctx context.Context, cfg model.ModelConfig, sys
 }
 
 func (s *Server) streamOrCompleteJSON(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, system string, msgs []llm.ChatMessage, finish func(text string) (any, error)) {
-	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), llm.RequestTimeout)
 	defer cancel()
 
 	if wantsStream(r) {
@@ -124,6 +127,17 @@ func issueRepoDesc(issue *model.Issue, proj *model.Project) string {
 		}
 	}
 	return b.String()
+}
+
+func resumeUserPrompt(body specRequestBody, fallback string) string {
+	prompt := strings.TrimSpace(body.Prompt)
+	if prompt == "" {
+		prompt = fallback
+	}
+	if !body.Resume && !body.FreshStart && strings.TrimSpace(body.ResumePartial) == "" {
+		return prompt
+	}
+	return llm.ApplyResumeHint(prompt, body.ResumePartial, body.FreshStart)
 }
 
 func recentChatMsgs(messages []model.ChatMessage) []llm.ChatMessage {
@@ -233,10 +247,7 @@ Rules:
 	if issue.DevSpec != nil {
 		prev = issue.DevSpec.RawMarkdown
 	}
-	prompt := strings.TrimSpace(body.Prompt)
-	if prompt == "" {
-		prompt = "请将当前需求拆分成若干可独立实施的子需求，每个子需求一份完整待开发文档，按实施顺序排列。"
-	}
+	prompt := resumeUserPrompt(body, "请将当前需求拆分成若干可独立实施的子需求，每个子需求一份完整待开发文档，按实施顺序排列。")
 	user := fmt.Sprintf(`Issue title: %s
 Description: %s
 Repos:
@@ -307,14 +318,15 @@ func (s *Server) handleGenerateSpec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	msgs := recentChatMsgs(body.Messages)
+	prompt := resumeUserPrompt(body, "")
 
 	switch {
 	case updateAll:
-		s.generateAllSubSpecs(w, r, cfg, issue, repoDesc, body.Prompt, msgs)
+		s.generateAllSubSpecs(w, r, cfg, issue, repoDesc, prompt, msgs)
 	case updateOne:
-		s.generateOneSubSpec(w, r, cfg, issue, repoDesc, subID, body.Prompt, msgs)
+		s.generateOneSubSpec(w, r, cfg, issue, repoDesc, subID, prompt, msgs)
 	default:
-		s.generateParentSpec(w, r, cfg, issue, repoDesc, body.Prompt, msgs)
+		s.generateParentSpec(w, r, cfg, issue, repoDesc, prompt, msgs)
 	}
 }
 

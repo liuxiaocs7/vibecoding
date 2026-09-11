@@ -83,6 +83,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     setModelProcess,
     abortRef,
     handleSendMessage,
+    pendingLlm,
+    handleRetrySession,
+    handleRegenerate,
   } = useIssueChat({
     issue,
     splitIssue,
@@ -306,6 +309,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               abortRef={abortRef}
               messagesEndRef={messagesEndRef}
               handleSendMessage={handleSendMessage}
+              pendingLlm={pendingLlm}
+              onRetrySession={handleRetrySession}
+              onRegenerate={handleRegenerate}
             />
           )}
 
@@ -326,10 +332,14 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               exporting={exporting}
               exportHint={exportHint}
               chatError={chatError}
+              isSending={isSending}
               setActiveTab={setActiveTab}
               handleSendMessage={handleSendMessage}
               handleExportDevSpec={handleExportDevSpec}
               onUpdateIssue={onUpdateIssue}
+              pendingLlm={pendingLlm}
+              onRetrySession={handleRetrySession}
+              onRegenerate={handleRegenerate}
             />
           )}
 
