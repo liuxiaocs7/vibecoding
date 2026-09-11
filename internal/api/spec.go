@@ -251,7 +251,7 @@ Latest user message:
 %s
 
 Split into ordered sub-requirements and return JSON.`,
-		issue.Title, issue.Description, repoDesc, prev, prompt)
+		issue.Title, issue.PromptDescription(), repoDesc, prev, prompt)
 
 	msgs := recentChatMsgs(body.Messages)
 	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
@@ -359,7 +359,7 @@ Latest user message:
 %s
 
 Update the Dev Spec accordingly and return JSON with chatReply + rawMarkdown.`,
-		issue.Title, issue.Description, repoDesc, prevSpec, prompt)
+		issue.Title, issue.PromptDescription(), repoDesc, prevSpec, prompt)
 	msgs = append(append([]llm.ChatMessage{}, msgs...), llm.ChatMessage{Role: "user", Content: user})
 
 	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
@@ -419,7 +419,7 @@ Latest user message:
 %s
 
 Update THIS sub-requirement Dev Spec and return JSON.`,
-		issue.Title, issue.Description, repoDesc, subIndexMarkdown(issue),
+		issue.Title, issue.PromptDescription(), repoDesc, subIndexMarkdown(issue),
 		sub.ID, sub.Title, sub.Description, prev, prompt)
 	msgs = append(append([]llm.ChatMessage{}, msgs...), llm.ChatMessage{Role: "user", Content: user})
 
@@ -490,7 +490,7 @@ Latest GLOBAL user message (apply to ALL sub-specs):
 %s
 
 Return JSON with overviewMarkdown + subRequirements (same ids).`,
-		issue.Title, issue.Description, repoDesc, subIndexMarkdown(issue),
+		issue.Title, issue.PromptDescription(), repoDesc, subIndexMarkdown(issue),
 		func() string {
 			if issue.DevSpec != nil {
 				return issue.DevSpec.RawMarkdown

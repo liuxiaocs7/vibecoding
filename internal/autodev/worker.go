@@ -201,7 +201,7 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 			return err
 		}
 	} else {
-		quality, err = r.developOne(ctx, job, issue, wtRepos, cfg, execCfg, issue.DevSpec, issue.Title, issue.Description, "", 40, 90, true, progress)
+		quality, err = r.developOne(ctx, job, issue, wtRepos, cfg, execCfg, issue.DevSpec, issue.Title, issue.PromptDescription(), "", 40, 90, true, progress)
 		if err != nil {
 			return err
 		}

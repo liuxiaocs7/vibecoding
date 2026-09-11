@@ -188,11 +188,22 @@ export interface IssueDiff {
   repos: RepoDiff[];
 }
 
+export interface IssueAttachment {
+  id: string;
+  name: string;
+  mime?: string;
+  size: number;
+  kind: 'text' | 'image' | 'file';
+  text?: string;
+  dataUrl?: string;
+}
+
 export interface Issue {
   id: string;
   projectId: string;
   title: string;
   description: string;
+  attachments?: IssueAttachment[];
   priority: Priority;
   status: IssueStatus;
   associatedRepoIds: string[];

@@ -3,6 +3,7 @@ import { Issue, GitRepo, ModelConfig, ChatMessage } from '../../types';
 import { Language, getTranslation } from '../../lib/i18n';
 import { sendLLMChat } from '../../lib/llm';
 import { api } from '../../lib/api';
+import { promptDescription } from '../../lib/attachments';
 
 export type ModelProcessState = {
   entries: { id: string; at: string; prompt: string; body: string; status: 'running' | 'done' | 'error' }[];
@@ -180,7 +181,7 @@ export function useIssueChat(params: {
           messages: updatedMessages,
           modelConfig,
           issueTitle: issue.title,
-          issueDescription: issue.description,
+          issueDescription: promptDescription(issue),
           associatedRepos: associatedRepos.map((r) => ({
             name: r.name,
             path: r.path,

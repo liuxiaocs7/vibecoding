@@ -14,7 +14,9 @@ import {
   ChevronDown,
   ChevronUp,
   Send,
+  FileText,
 } from 'lucide-react';
+import { formatFileSize } from '../../lib/attachments';
 
 interface IssueChatTabProps {
   issue: Issue;
@@ -70,6 +72,34 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             lang={lang}
             themeStyle={themeStyle}
           />
+        )}
+
+        {(issue.description || (issue.attachments && issue.attachments.length > 0)) && (
+          <div className={`rounded-2xl border p-4 space-y-3 ${themeConfig.cardBg}`}>
+            {issue.description && (
+              <div className={`text-sm leading-relaxed whitespace-pre-wrap ${themeConfig.textSecondary}`}>
+                {issue.description}
+              </div>
+            )}
+            {(issue.attachments || []).length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {(issue.attachments || []).map((att) => (
+                  <div
+                    key={att.id}
+                    className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-[11px] ${themeConfig.inputBg} ${themeConfig.inputBorder} ${themeConfig.textSecondary}`}
+                  >
+                    {att.kind === 'image' && att.dataUrl ? (
+                      <img src={att.dataUrl} alt="" className="w-7 h-7 rounded-md object-cover" />
+                    ) : (
+                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                    )}
+                    <span className="max-w-[160px] truncate">{att.name}</span>
+                    <span className={themeConfig.textMuted}>{formatFileSize(att.size)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         )}
         {visibleMessages.map((msg) => (
           <div

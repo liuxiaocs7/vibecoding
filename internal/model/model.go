@@ -169,7 +169,6 @@ type AutoDevLog struct {
 	Details   string `json:"details,omitempty"`
 }
 
-
 type WorktreeRef struct {
 	RepoID   string `json:"repoId"`
 	RepoName string `json:"repoName"`
@@ -188,7 +187,7 @@ type QualityGate struct {
 
 // ExecutorConfig selects how Auto-Dev produces code.
 type ExecutorConfig struct {
-	Type        string   `json:"type"` // "llm" (default) | "agent"
+	Type        string   `json:"type"`   // "llm" (default) | "agent"
 	Preset      string   `json:"preset"` // claude | cursor | codex | custom
 	Command     string   `json:"command,omitempty"`
 	Args        []string `json:"args,omitempty"` // may contain {prompt}
@@ -276,30 +275,65 @@ type PRInfo struct {
 	Executor    string        `json:"executor,omitempty"`
 }
 
+type IssueAttachment struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	MIME    string `json:"mime,omitempty"`
+	Size    int64  `json:"size"`
+	Kind    string `json:"kind"` // text | image | file
+	Text    string `json:"text,omitempty"`
+	DataURL string `json:"dataUrl,omitempty"`
+}
+
 type Issue struct {
-	ID                string           `json:"id"`
-	ProjectID         string           `json:"projectId"`
-	Title             string           `json:"title"`
-	Description       string           `json:"description"`
-	Priority          Priority         `json:"priority"`
-	Status            IssueStatus      `json:"status"`
-	AssociatedRepoIDs []string         `json:"associatedRepoIds"`
-	Assignee          string           `json:"assignee"`
-	ChatMessages      []ChatMessage    `json:"chatMessages"`
-	DevSpec           *DevSpec         `json:"devSpec,omitempty"`
-	SubRequirements   []SubRequirement `json:"subRequirements,omitempty"`
-	CurrentSubID      string           `json:"currentSubId,omitempty"`
-	ReworkSubID       string           `json:"reworkSubId,omitempty"`
-	AutoDevLogs       []AutoDevLog     `json:"autoDevLogs"`
-	AutoDevProgress   int              `json:"autoDevProgress"`
-	PRInfo            *PRInfo          `json:"prInfo,omitempty"`
-	ReviewFeedback    string           `json:"reviewFeedback,omitempty"`
-	CreatedAt         string           `json:"createdAt"`
-	UpdatedAt         string           `json:"updatedAt"`
+	ID                string            `json:"id"`
+	ProjectID         string            `json:"projectId"`
+	Title             string            `json:"title"`
+	Description       string            `json:"description"`
+	Attachments       []IssueAttachment `json:"attachments,omitempty"`
+	Priority          Priority          `json:"priority"`
+	Status            IssueStatus       `json:"status"`
+	AssociatedRepoIDs []string          `json:"associatedRepoIds"`
+	Assignee          string            `json:"assignee"`
+	ChatMessages      []ChatMessage     `json:"chatMessages"`
+	DevSpec           *DevSpec          `json:"devSpec,omitempty"`
+	SubRequirements   []SubRequirement  `json:"subRequirements,omitempty"`
+	CurrentSubID      string            `json:"currentSubId,omitempty"`
+	ReworkSubID       string            `json:"reworkSubId,omitempty"`
+	AutoDevLogs       []AutoDevLog      `json:"autoDevLogs"`
+	AutoDevProgress   int               `json:"autoDevProgress"`
+	PRInfo            *PRInfo           `json:"prInfo,omitempty"`
+	ReviewFeedback    string            `json:"reviewFeedback,omitempty"`
+	CreatedAt         string            `json:"createdAt"`
+	UpdatedAt         string            `json:"updatedAt"`
 }
 
 func (iss *Issue) HasSubRequirements() bool {
 	return iss != nil && len(iss.SubRequirements) > 0
+}
+
+// PromptDescription is the issue brief plus extracted attachment text for LLM prompts.
+func (iss *Issue) PromptDescription() string {
+	if iss == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(iss.Description)
+	for _, a := range iss.Attachments {
+		name := strings.TrimSpace(a.Name)
+		if name == "" {
+			name = "unnamed"
+		}
+		switch {
+		case strings.TrimSpace(a.Text) != "":
+			fmt.Fprintf(&b, "\n\n----- Attached file: %s -----\n%s", name, a.Text)
+		case a.Kind == "image":
+			fmt.Fprintf(&b, "\n\n[Attached image: %s]", name)
+		default:
+			fmt.Fprintf(&b, "\n\n[Attached file: %s]", name)
+		}
+	}
+	return b.String()
 }
 
 // SpecReadyForDev reports whether Auto-Dev / backlog can proceed.

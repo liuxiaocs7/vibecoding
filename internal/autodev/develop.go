@@ -87,7 +87,7 @@ func (r *Runner) developSubs(
 			extra.WriteString(fmt.Sprintf("- sibling [%d] %s (%s)\n", sib.Order, sib.Title, sib.Status))
 		}
 
-		q, err := r.developOne(ctx, job, issue, repos, cfg, execCfg, sub.DevSpec, sub.Title, firstNonEmpty(sub.Description, issue.Description), extra.String(), pStart, pEnd, k == n-1, progress)
+		q, err := r.developOne(ctx, job, issue, repos, cfg, execCfg, sub.DevSpec, sub.Title, firstNonEmpty(sub.Description, issue.PromptDescription()), extra.String(), pStart, pEnd, k == n-1, progress)
 		if err != nil {
 			sub.Status = model.SubReqFailed
 			issue.UpdatedAt = model.NowISO()

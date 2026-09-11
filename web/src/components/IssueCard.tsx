@@ -2,7 +2,7 @@ import React from 'react';
 import { Issue, GitRepo, BranchPrefixConfig } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
-import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers } from 'lucide-react';
+import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers, Paperclip } from 'lucide-react';
 import { hasSubRequirements, readySubCount } from '../lib/subreq';
 
 interface IssueCardProps {
@@ -120,6 +120,15 @@ export const IssueCard: React.FC<IssueCardProps> = ({
               }`}>
                 <GitPullRequest className="w-3 h-3 text-purple-400 shrink-0" />
                 <span className="truncate">{t.reviewPending}</span>
+              </span>
+            )}
+            {(issue.attachments || []).length > 0 && (
+              <span
+                className={`px-2 py-0.5 rounded-md text-[10px] border flex items-center gap-1 shrink-0 ${themeConfig.badgeRepoBg} ${themeConfig.badgeRepoText}`}
+                title={t.attachmentCount.replace('{n}', String(issue.attachments?.length || 0))}
+              >
+                <Paperclip className="w-3 h-3 shrink-0" />
+                {issue.attachments?.length}
               </span>
             )}
           </div>
