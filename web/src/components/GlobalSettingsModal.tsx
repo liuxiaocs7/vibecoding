@@ -4,6 +4,7 @@ import { testOpenAPIConnection } from '../lib/llm';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { api } from '../lib/api';
+import { ThemedSelect } from './ThemedSelect';
 import {
   X,
   Sparkles,
@@ -14,7 +15,6 @@ import {
   Globe,
   Cpu,
   Sliders,
-  ChevronDown,
   Maximize2,
   Minimize2,
 } from 'lucide-react';
@@ -96,18 +96,15 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
     children: React.ReactNode;
     className?: string;
   }> = ({ value, onChange, children, className }) => (
-    <div className={`relative ${className || ''}`}>
-      <select
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className={`${controlClass} pr-9 cursor-pointer`}
-      >
-        {children}
-      </select>
-      <ChevronDown
-        className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 opacity-60 ${themeConfig.textSecondary}`}
-      />
-    </div>
+    <ThemedSelect
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      isLight={isLight}
+      chevronClassName={themeConfig.textSecondary}
+      className={`${controlClass} ${className || ''}`}
+    >
+      {children}
+    </ThemedSelect>
   );
 
   const handleTestConnection = async () => {

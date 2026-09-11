@@ -22,7 +22,17 @@
   select.vc-control {
     background-image: none;
   }
-  select.vc-control option {
+  select.vc-control[data-color-scheme='light'] {
+    color-scheme: light;
+  }
+  select.vc-control[data-color-scheme='dark'] {
+    color-scheme: dark;
+  }
+  select.vc-control[data-color-scheme='light'] option {
+    background-color: #fff;
+    color: #0f172a;
+  }
+  select.vc-control[data-color-scheme='dark'] option {
     background-color: #0f172a;
     color: #f1f5f9;
   }

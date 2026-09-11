@@ -3,6 +3,7 @@ import { Issue, GitRepo, Priority, IssueStatus } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { X, PlusCircle, GitBranch, AlertCircle, Sparkles, Check, Repeat } from 'lucide-react';
+import { ThemedSelect } from './ThemedSelect';
 
 interface CreateIssueModalProps {
   isOpen: boolean;
@@ -205,16 +206,18 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className={`block text-xs font-semibold mb-1.5 ${themeConfig.textPrimary}`}>优先级</label>
-              <select
+              <ThemedSelect
                 value={priority}
                 onChange={(e) => setPriority(e.target.value as Priority)}
-                className={`w-full px-3 py-2 border rounded-xl focus:outline-none text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                isLight={isLight}
+                chevronClassName={themeConfig.textSecondary}
+                className={`px-3 py-2 border rounded-xl focus:outline-none text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
               >
-                <option value="low" className={isLight ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>低 (Low)</option>
-                <option value="medium" className={isLight ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>中 (Medium)</option>
-                <option value="high" className={isLight ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>高 (High)</option>
-                <option value="urgent" className={isLight ? 'bg-white text-slate-900' : 'bg-slate-900 text-white'}>紧急 (Urgent)</option>
-              </select>
+                <option value="low">低 (Low)</option>
+                <option value="medium">中 (Medium)</option>
+                <option value="high">高 (High)</option>
+                <option value="urgent">紧急 (Urgent)</option>
+              </ThemedSelect>
             </div>
 
             <div>

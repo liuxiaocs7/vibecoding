@@ -9,6 +9,7 @@ import {
   GitMerge,
   AlertTriangle,
 } from 'lucide-react';
+import { ThemedSelect } from '../ThemedSelect';
 
 interface IssueReviewTabProps {
   issue: Issue;
@@ -112,10 +113,12 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
           {splitIssue && (
             <label className="block text-[11px] space-y-1">
               <span className={themeConfig.textMuted}>{t.reworkScope}</span>
-              <select
+              <ThemedSelect
                 value={reworkScope}
                 onChange={(e) => setReworkScope(e.target.value)}
-                className={`w-full p-2 border rounded-lg text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                isLight={themeConfig.isLight}
+                chevronClassName={themeConfig.textSecondary}
+                className={`p-2 border rounded-lg text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
               >
                 <option value="all">{t.reworkAll}</option>
                 {(issue.subRequirements || []).map((sub) => (
@@ -123,7 +126,7 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
                     {sub.order}. {sub.title}
                   </option>
                 ))}
-              </select>
+              </ThemedSelect>
             </label>
           )}
           <textarea
