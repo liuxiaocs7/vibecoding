@@ -25,6 +25,11 @@ type Runner struct {
 	NewExecutor func(cfg model.ExecutorConfig) (executor.Executor, error)
 }
 
+// RunSync executes a job on the calling goroutine (tests / sync callers).
+func (r *Runner) RunSync(ctx context.Context, jobID string) error {
+	return r.run(ctx, jobID)
+}
+
 func (r *Runner) Start(jobID string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.Hub.mu.Lock()

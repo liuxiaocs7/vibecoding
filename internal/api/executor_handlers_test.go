@@ -13,6 +13,7 @@ import (
 
 	"github.com/ymhhh/vibecoding/internal/autodev"
 	"github.com/ymhhh/vibecoding/internal/db"
+	"github.com/ymhhh/vibecoding/internal/executor"
 	"github.com/ymhhh/vibecoding/internal/model"
 )
 
@@ -108,6 +109,37 @@ func TestListExecutors(t *testing.T) {
 	}
 }
 
+func TestListExecutorsMarksLLMWhenKeyConfigured(t *testing.T) {
+	srv, store := testServer(t)
+	if err := store.PutModelConfig(model.ModelConfig{
+		OpenAIAPIKey: "sk-test-key-for-probe",
+		OpenAIModel:  "gpt-test",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/executors", nil)
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Executors []executor.ProbeResult `json:"executors"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	var llm executor.ProbeResult
+	for _, e := range resp.Executors {
+		if e.ID == "llm" {
+			llm = e
+		}
+	}
+	if !llm.Available {
+		t.Fatalf("llm should be available when API key set: %+v", llm)
+	}
+}
+
 func TestIssueDiffAndApproveDirty(t *testing.T) {
 	srv, store := testServer(t)
 	repoDir := t.TempDir()
@@ -175,5 +207,71 @@ func TestIssueDiffAndApproveDirty(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code < 400 {
 		t.Fatalf("expected merge rejection on dirty main, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestApproveMergeSuccessRemovesWorktrees(t *testing.T) {
+	srv, store := testServer(t)
+	repoDir := t.TempDir()
+	initRepo(t, repoDir, "main")
+
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	wtPath := filepath.Join(t.TempDir(), "issue-ok", "r1")
+	run(repoDir, "worktree", "add", "-b", "ai-dev/issue-ok", wtPath, "main")
+	if err := os.WriteFile(filepath.Join(wtPath, "feat.txt"), []byte("merged\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(wtPath, "add", ".")
+	run(wtPath, "commit", "-m", "feat")
+
+	repo := model.GitRepo{ID: "r1", Name: "demo", Path: repoDir, DefaultBranch: "main"}
+	proj := model.Project{ID: "p1", Name: "p", GitRepos: []model.GitRepo{repo}, CreatedAt: model.NowISO(), UpdatedAt: model.NowISO()}
+	if err := store.UpsertProject(proj); err != nil {
+		t.Fatal(err)
+	}
+	issue := model.Issue{
+		ID: "i-ok", ProjectID: "p1", Title: "t", Status: model.StatusInReview,
+		AssociatedRepoIDs: []string{"r1"},
+		PRInfo: &model.PRInfo{
+			ID: "pr-ok", BranchName: "ai-dev/issue-ok", Title: "t", Status: "open",
+			BaseBranch: "main", Author: "bot", CreatedAt: model.NowISO(),
+			Worktrees: []model.WorktreeRef{{RepoID: "r1", RepoName: "demo", Path: wtPath}},
+		},
+		CreatedAt: model.NowISO(), UpdatedAt: model.NowISO(),
+	}
+	if err := store.UpsertIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/i-ok/approve-merge", bytes.NewReader(nil))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("approve status=%d %s", rr.Code, rr.Body.String())
+	}
+	var got model.Issue
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != model.StatusCompleted || got.PRInfo == nil || got.PRInfo.Status != "merged" {
+		t.Fatalf("issue after approve: status=%s pr=%+v", got.Status, got.PRInfo)
+	}
+	if len(got.PRInfo.Worktrees) != 0 {
+		t.Fatalf("worktrees should be cleared: %+v", got.PRInfo.Worktrees)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "feat.txt")); err != nil {
+		t.Fatalf("expected feat.txt on default branch after merge: %v", err)
+	}
+	if _, err := os.Stat(wtPath); !os.IsNotExist(err) {
+		t.Fatalf("worktree path should be removed, stat err=%v", err)
 	}
 }

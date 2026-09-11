@@ -184,6 +184,46 @@ func TestProbeMissingBinaries(t *testing.T) {
 	}
 }
 
+func TestProbeLLMAvailableWhenCLIsMissing(t *testing.T) {
+	t.Parallel()
+	look := func(string) (string, error) { return "", exec.ErrNotFound }
+	res := Probe(ProbeOptions{LookPath: look, LLMConfigured: true})
+	byID := map[string]ProbeResult{}
+	for _, r := range res {
+		byID[r.ID] = r
+	}
+	llm := byID["llm"]
+	if !llm.Available || llm.Hint != "" {
+		t.Fatalf("llm should be available without CLI: %+v", llm)
+	}
+	for _, id := range []string{"claude", "cursor", "codex"} {
+		r := byID[id]
+		if r.Available {
+			t.Fatalf("%s should be greyed (unavailable): %+v", id, r)
+		}
+		if r.Hint == "" {
+			t.Fatalf("%s should carry install/login hint: %+v", id, r)
+		}
+	}
+	if !byID["custom"].Available {
+		t.Fatal("custom should stay available")
+	}
+	// LLM executor remains constructible without any agent CLI on PATH.
+	ex, err := Build(model.ExecutorConfig{Type: "llm"}, stubChat{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ex.Name() != "llm" {
+		t.Fatalf("name=%q", ex.Name())
+	}
+}
+
+type stubChat struct{}
+
+func (stubChat) Chat(ctx context.Context, req llm.ChatRequest) (string, error) {
+	return "[]", nil
+}
+
 func TestBuildExecutor(t *testing.T) {
 	t.Parallel()
 	ex, err := Build(model.ExecutorConfig{Type: "llm"}, nil)

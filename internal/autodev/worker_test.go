@@ -189,6 +189,10 @@ func TestRunPreservesMainDirtyAndHEAD(t *testing.T) {
 		t.Fatalf("missing worktrees on PRInfo: %+v", issue.PRInfo)
 	}
 	wt := issue.PRInfo.Worktrees[0].Path
+	wantWT := filepath.Join(wtRoot, "issue-1", "repo-1")
+	if wt != wantWT {
+		t.Fatalf("worktree path=%s want %s", wt, wantWT)
+	}
 	if _, err := os.Stat(wt); err != nil {
 		t.Fatalf("worktree missing: %v", err)
 	}
@@ -309,8 +313,18 @@ func TestRunHealRounds(t *testing.T) {
 	if !issue.PRInfo.Quality.TestsPassed {
 		t.Fatalf("expected tests passed: %+v", issue.PRInfo.Quality)
 	}
-	if !strings.Contains(issue.PRInfo.Executor, "fake") && issue.PRInfo.Executor == "" {
-		// Executor name comes from DisplayName of config (llm), job may store that;
-		// quality/heal is the important assertion above.
+	logs, err := store.ListJobLogs(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawRepair bool
+	for _, l := range logs {
+		if strings.Contains(l.Message, "repair round") {
+			sawRepair = true
+			break
+		}
+	}
+	if !sawRepair {
+		t.Fatalf("expected repair round log, got %#v", logs)
 	}
 }
