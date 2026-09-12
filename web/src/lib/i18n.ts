@@ -134,6 +134,12 @@ export const TRANSLATIONS = {
     rebasing: 'Rebasing…',
     rebaseOk: 'Rebase finished',
     rebaseNeedEditor: 'Conflict — open the worktree in an editor to resolve',
+    publishRemote: 'Publish to remote',
+    publishingRemote: 'Publishing…',
+    publishRemoteOk: 'Pushed to origin',
+    publishRemotePR: 'Opened PR: {url}',
+    publishRemoteWarn: 'Publish finished with warnings',
+    publishRemoteHint: 'Pushes the feature branch to origin. Creates a GitHub PR when gh is installed.',
 
     // Common Buttons
     cancel: 'Cancel',
@@ -404,6 +410,12 @@ export const TRANSLATIONS = {
     rebasing: '正在变基…',
     rebaseOk: '变基完成',
     rebaseNeedEditor: '发生冲突，请用编辑器打开 worktree 解决',
+    publishRemote: '发布到远端',
+    publishingRemote: '正在发布…',
+    publishRemoteOk: '已推送到 origin',
+    publishRemotePR: '已创建 PR：{url}',
+    publishRemoteWarn: '发布完成，但有警告',
+    publishRemoteHint: '把特性分支推到 origin；本机有 gh 时再创建 GitHub PR。失败不影响本地合并。',
 
     // Common Buttons
     cancel: '取消',

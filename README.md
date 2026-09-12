@@ -150,9 +150,9 @@ Open http://localhost:3000
 4. Create an **Issue**, chat with the AI, then **Extract Dev Spec**. Large issues can be **split into sub-requirements**, each with its own spec. Chat can update every sub-spec at once, or a single sub-spec.
 5. **Accept Spec → Backlog**, then **Start Auto-Dev**. Split issues are implemented in order, with one commit per sub-requirement. Coding runs in isolated git worktrees under `{data-dir}/worktrees/{issueID}/{repoID}/` (default `~/.vibecoding/worktrees/...`) so your main checkout and dirty files stay untouched.
 6. Watch live logs (SSE), including agent CLI output when that executor is selected. On success the issue moves to **In Review** with a **real** file tree + unified diff and quality-gate results. Failed tests may auto-heal up to `maxHeal` rounds (default 2); still failing returns the issue to Backlog and keeps the worktree for inspection. Rework can target the whole issue or one sub-requirement.
-7. **Approve & Merge** merges the feature branch into the repo default branch locally (refuses if that branch is checked out and dirty), then removes the worktree. You can also open the worktree in Cursor / VS Code from the review UI.
+7. **Approve & Merge** merges the feature branch into the repo default branch locally (refuses if that branch is checked out and dirty), then removes the worktree. You can also open the worktree in Cursor / VS Code from the review UI. Optional **Publish to remote** pushes the feature branch to `origin` and runs `gh pr create` when `gh` is installed — failures are warnings and do not block local merge.
 
-Design details: [docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md).
+Design details: [docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md). Next slice (inline review comments, start-time executor override, setup/rebase): [docs/review-loop-executor-override.md](./docs/review-loop-executor-override.md).
 
 ### Coding executors (optional CLI)
 

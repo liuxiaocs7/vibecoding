@@ -142,6 +142,11 @@ export const api = {
       `/api/issues/${id}/rebase`,
       { method: 'POST', body: '{}' }
     ),
+  publishRemote: (id: string) =>
+    request<{ ok: boolean; pushed?: number; prUrl?: string; warnings?: string[]; error?: string; issue?: Issue }>(
+      `/api/issues/${id}/publish-remote`,
+      { method: 'POST', body: '{}' }
+    ),
   openEditor: (id: string, app: 'cursor' | 'vscode', repoId?: string) =>
     request<{ ok: boolean; app: string; path: string }>(`/api/issues/${id}/open-editor`, {
       method: 'POST',

@@ -8,6 +8,7 @@ import {
   RotateCcw,
   GitMerge,
   AlertTriangle,
+  Upload,
 } from 'lucide-react';
 import { ThemedSelect } from '../ThemedSelect';
 
@@ -25,6 +26,8 @@ interface IssueReviewTabProps {
   handleReworkSubmit: () => Promise<void>;
   handleReworkByComments: () => Promise<void>;
   handleApproveMerge: () => Promise<void>;
+  handlePublishRemote: () => Promise<void>;
+  publishingRemote?: boolean;
   onCommentsChange: (comments: Issue['reviewComments']) => void;
 }
 
@@ -42,6 +45,8 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
   handleReworkSubmit,
   handleReworkByComments,
   handleApproveMerge,
+  handlePublishRemote,
+  publishingRemote,
   onCommentsChange,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
@@ -69,6 +74,14 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
           </div>
           <p className={`text-xs mt-1 ${themeConfig.textMuted}`}>
             目标分支: <code className="text-indigo-600 dark:text-indigo-300 font-mono">{issue.prInfo?.branchName || `feature/issue-${issue.id}`}</code> | 提交者: {issue.prInfo?.author || 'AI Auto-Dev Agent'}
+            {issue.prInfo?.remoteUrl ? (
+              <>
+                {' | '}
+                <a href={issue.prInfo.remoteUrl} target="_blank" rel="noreferrer" className="text-sky-600 underline">
+                  {issue.prInfo.remoteUrl}
+                </a>
+              </>
+            ) : null}
           </p>
           {splitIssue && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -102,6 +115,16 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
             >
               <RotateCcw className="w-3.5 h-3.5" />
               二次修改 (提意见打回)
+            </button>
+            <button
+              type="button"
+              onClick={() => void handlePublishRemote()}
+              disabled={!!publishingRemote}
+              title={t.publishRemoteHint}
+              className="px-4 py-2 bg-sky-500/20 hover:bg-sky-500/30 border border-sky-500/30 text-sky-800 dark:text-sky-200 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors disabled:opacity-40"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              {publishingRemote ? t.publishingRemote : t.publishRemote}
             </button>
             <button
               onClick={handleApproveMerge}

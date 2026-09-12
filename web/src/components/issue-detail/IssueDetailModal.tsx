@@ -75,6 +75,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   const [reworkScope, setReworkScope] = useState<string>('all');
   const [exporting, setExporting] = useState(false);
   const [exportHint, setExportHint] = useState('');
+  const [publishingRemote, setPublishingRemote] = useState(false);
   const [dockEl, setDockEl] = useState<HTMLElement | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -301,6 +302,32 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     }
   };
 
+  const handlePublishRemote = async () => {
+    setPublishingRemote(true);
+    setChatError('');
+    try {
+      const res = await api.publishRemote(issue.id);
+      if (res.issue) onUpdateIssue(res.issue);
+      const warns = res.warnings?.filter(Boolean) || [];
+      if (!res.ok) {
+        setChatError(res.error || warns.join('\n') || t.publishRemoteWarn);
+        return;
+      }
+      if (res.prUrl) {
+        setExportHint(t.publishRemotePR.replace('{url}', res.prUrl));
+      } else {
+        setExportHint(t.publishRemoteOk);
+      }
+      if (warns.length) {
+        setChatError(warns.join('\n'));
+      }
+    } catch (err: any) {
+      setChatError(err.message || t.publishRemoteWarn);
+    } finally {
+      setPublishingRemote(false);
+    }
+  };
+
   const handleExportDevSpec = async () => {
     const { filename, markdown } = specMarkdownForExport(
       issue,
@@ -473,6 +500,8 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               handleReworkSubmit={handleReworkSubmit}
               handleReworkByComments={handleReworkByComments}
               handleApproveMerge={handleApproveMerge}
+              handlePublishRemote={handlePublishRemote}
+              publishingRemote={publishingRemote}
               onCommentsChange={handleCommentsChange}
             />
           )}

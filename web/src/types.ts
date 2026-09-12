@@ -150,6 +150,7 @@ export interface PRInfo {
   baseBranch?: string;
   quality?: QualityGate;
   executor?: string;
+  remoteUrl?: string;
 }
 
 export type ExecutorType = 'llm' | 'agent';

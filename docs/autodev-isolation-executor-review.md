@@ -315,4 +315,6 @@ README 双语补充：worktree 路径、CLI 安装登录、YOLO 仅限 worktree�
 
 项目级执行器覆盖、Start 时临时换执行器、行内 diff 评论、rebase API、GitHub PR / push、看板 MCP、Cursor ACP、Gemini/Copilot CLI、内置预览浏览器、拖拽看板。
 
+上述暂缓项已按对照 Vibe Kanban 后的优先级重排，见 [评审闭环与执行器覆盖](./review-loop-executor-override.md)。
+
 LLM 改成 unified diff 输出留到下一期；本期 Agent 路径已经是「工具改文件」，不依赖 JSON dump。

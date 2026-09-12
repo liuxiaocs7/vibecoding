@@ -189,6 +189,122 @@ func (s *Server) handleIssueRebase(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "baseBranch": base, "repos": results})
 }
 
+func (s *Server) handleIssuePublishRemote(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	switch issue.Status {
+	case model.StatusInReview, model.StatusBacklog:
+	default:
+		writeErr(w, 400, "publish is only available in review or backlog")
+		return
+	}
+	if issue.PRInfo == nil || strings.TrimSpace(issue.PRInfo.BranchName) == "" {
+		writeErr(w, 400, "issue has no Auto-Dev branch yet")
+		return
+	}
+	if len(issue.PRInfo.Worktrees) == 0 {
+		writeErr(w, 400, "no worktree available; run Auto-Dev first")
+		return
+	}
+	branch := issue.PRInfo.BranchName
+	base := issue.PRInfo.BaseBranch
+	title := issue.PRInfo.Title
+	if strings.TrimSpace(title) == "" {
+		title = issue.Title
+	}
+	body := issue.PRInfo.Description
+	var warnings []string
+	pushed := 0
+	prURL := ""
+	for _, wt := range issue.PRInfo.Worktrees {
+		if st, err := os.Stat(wt.Path); err != nil || !st.IsDir() {
+			warnings = append(warnings, wt.RepoName+": worktree missing")
+			continue
+		}
+		if !gitx.HasOrigin(wt.Path) {
+			warnings = append(warnings, wt.RepoName+": no origin remote")
+			continue
+		}
+		if err := gitx.PushOrigin(wt.Path, branch); err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: push failed: %v", wt.RepoName, err))
+			continue
+		}
+		pushed++
+		if prURL == "" {
+			url, err := createGitHubPR(wt.Path, firstNonEmptyAPI(base, "main"), branch, title, body)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s: gh pr: %v", wt.RepoName, err))
+			} else {
+				prURL = url
+			}
+		}
+	}
+	if pushed == 0 && prURL == "" {
+		msg := "nothing published"
+		if len(warnings) > 0 {
+			msg = strings.Join(warnings, "; ")
+		}
+		writeJSON(w, 200, map[string]any{"ok": false, "warnings": warnings, "error": msg, "issue": issue})
+		return
+	}
+	if issue.PRInfo != nil && prURL != "" {
+		issue.PRInfo.RemoteURL = prURL
+	}
+	issue.AutoDevLogs = append(issue.AutoDevLogs, model.AutoDevLog{
+		ID:        "log-" + uuid.NewString()[:8],
+		Timestamp: time.Now().Format("15:04:05"),
+		Phase:     "completed",
+		Message:   fmt.Sprintf("Published to origin (%d repo(s))%s", pushed, publishSuffix(prURL)),
+	})
+	issue.UpdatedAt = model.NowISO()
+	_ = s.Store.UpsertIssue(*issue)
+	writeJSON(w, 200, map[string]any{
+		"ok":       true,
+		"pushed":   pushed,
+		"prUrl":    prURL,
+		"warnings": warnings,
+		"issue":    issue,
+	})
+}
+
+func publishSuffix(prURL string) string {
+	if strings.TrimSpace(prURL) == "" {
+		return ""
+	}
+	return "; PR " + prURL
+}
+
+func firstNonEmptyAPI(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func createGitHubPR(dir, base, head, title, body string) (string, error) {
+	if _, err := exec.LookPath("gh"); err != nil {
+		return "", fmt.Errorf("gh CLI not found on PATH")
+	}
+	cmd := exec.Command("gh", "pr", "create", "--base", base, "--head", head, "--title", title, "--body", body)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	s := strings.TrimSpace(string(out))
+	if err != nil {
+		if s == "" {
+			s = err.Error()
+		}
+		return "", fmt.Errorf("%s", s)
+	}
+	lines := strings.Split(s, "\n")
+	return strings.TrimSpace(lines[len(lines)-1]), nil
+}
+
 type openEditorBody struct {
 	App    string `json:"app"` // cursor | vscode
 	RepoID string `json:"repoId,omitempty"`

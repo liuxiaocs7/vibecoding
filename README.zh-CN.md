@@ -150,9 +150,9 @@ make dev
 4. 创建**需求（Issue）**，与 AI 对话，然后 **Extract Dev Spec** 提取开发规格。需求较大时可 **拆分子需求**，每份独立待开发文档；支持全局描述改全部子文档，或针对单个子需求修改。
 5. **Accept Spec → Backlog**，随后 **Start Auto-Dev**。有子需求时按顺序逐一编码并提交。编码发生在隔离 git worktree：`{data-dir}/worktrees/{issueID}/{repoID}/`（默认 `~/.vibecoding/worktrees/...`），主仓当前分支与未提交改动保持不变。
 6. 观看实时日志（SSE）；选用 Agent CLI 时可见其输出。成功后进入 **In Review**，展示**真实**文件树、unified diff 与质量门禁。测试失败最多自愈 `maxHeal` 轮（默认 2）；仍失败则回 Backlog 并保留 worktree 便于对照。返工可针对整单或单个子需求。
-7. **Approve & Merge** 在本地把特性分支合入默认分支（若默认分支正被 checkout 且 dirty 会拒绝），然后删除 worktree。也可在评审页用 Cursor / VS Code 打开该 worktree。
+7. **Approve & Merge** 在本地把特性分支合入默认分支（若默认分支正被 checkout 且 dirty 会拒绝），然后删除 worktree。也可在评审页用 Cursor / VS Code 打开该 worktree。可选 **发布到远端**：把特性分支 `git push` 到 origin，本机有 `gh` 时再 `gh pr create`；失败只告警，不阻断本地合并。
 
-设计说明见：[docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md)。
+设计说明见：[docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md)。下一期（行内评论返工、Start 覆盖执行器、setup/rebase）：[docs/review-loop-executor-override.md](./docs/review-loop-executor-override.md)。
 
 ### 编码执行器（可选 CLI）
 

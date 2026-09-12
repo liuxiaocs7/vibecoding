@@ -296,3 +296,51 @@ func TestIssueRebaseRejectedWhenInProgress(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestIssuePublishRemoteNoOriginWarns(t *testing.T) {
+	srv, store := testServer(t)
+	wt := t.TempDir()
+	initRepo(t, wt, "main")
+	issue := model.Issue{
+		ID: "i-pub", ProjectID: "p1", Title: "t", Status: model.StatusInReview,
+		PRInfo: &model.PRInfo{
+			BranchName: "ai-dev/x", BaseBranch: "main", Status: "open", Title: "t",
+			Worktrees: []model.WorktreeRef{{RepoID: "r1", RepoName: "demo", Path: wt}},
+		},
+		CreatedAt: model.NowISO(), UpdatedAt: model.NowISO(),
+	}
+	if err := store.UpsertIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/i-pub/publish-remote", strings.NewReader("{}"))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["ok"] != false {
+		t.Fatalf("%v", resp)
+	}
+}
+
+func TestIssuePublishRemoteRejectedWhenInProgress(t *testing.T) {
+	srv, store := testServer(t)
+	issue := model.Issue{
+		ID: "i-pub2", Title: "t", Status: model.StatusInProgress,
+		PRInfo: &model.PRInfo{BranchName: "ai-dev/x", Worktrees: []model.WorktreeRef{{Path: t.TempDir()}}},
+		CreatedAt: model.NowISO(), UpdatedAt: model.NowISO(),
+	}
+	if err := store.UpsertIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/i-pub2/publish-remote", strings.NewReader("{}"))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 400 {
+		t.Fatalf("status=%d %s", rr.Code, rr.Body.String())
+	}
+}

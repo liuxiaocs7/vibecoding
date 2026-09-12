@@ -274,6 +274,7 @@ type PRInfo struct {
 	BaseBranch  string        `json:"baseBranch,omitempty"`
 	Quality     *QualityGate  `json:"quality,omitempty"`
 	Executor    string        `json:"executor,omitempty"`
+	RemoteURL   string        `json:"remoteUrl,omitempty"`
 }
 
 type IssueAttachment struct {

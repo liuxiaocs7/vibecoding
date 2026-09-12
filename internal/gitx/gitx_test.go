@@ -383,3 +383,26 @@ func TestRebaseOntoConflictLeavesWorktree(t *testing.T) {
 		t.Fatalf("expected conflict markers in worktree file: %q", data)
 	}
 }
+
+func TestPushOriginToBareRemote(t *testing.T) {
+	dir := initRepo(t, "main")
+	bare := t.TempDir()
+	runGit(t, bare, "init", "--bare")
+	if HasOrigin(dir) {
+		t.Fatal("did not expect origin yet")
+	}
+	runGit(t, dir, "remote", "add", "origin", bare)
+	if !HasOrigin(dir) {
+		t.Fatal("expected origin")
+	}
+	runGit(t, dir, "checkout", "-b", "ai-dev/pub")
+	writeFile(t, filepath.Join(dir, "pub.txt"), "ok\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "pub")
+	if err := PushOrigin(dir, "ai-dev/pub"); err != nil {
+		t.Fatal(err)
+	}
+	if err := PushOrigin(dir, ""); err == nil {
+		t.Fatal("empty branch should fail")
+	}
+}
