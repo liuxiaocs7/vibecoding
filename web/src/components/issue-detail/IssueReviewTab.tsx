@@ -120,6 +120,7 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
         issue={issue}
         lang={lang}
         canComment={issue.status === 'in_review'}
+        canRebase={issue.status === 'in_review' || issue.status === 'backlog'}
         onCommentsChange={onCommentsChange}
       />
 

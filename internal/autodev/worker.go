@@ -199,6 +199,14 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 	for _, s := range sessions {
 		_ = r.appendLog(job, "branching", fmt.Sprintf("[%s] worktree %s (base=%s, branch=%s)", s.Repo.Name, s.WTPath, s.Base, s.Branch), "")
 	}
+	if hasSetupCommand(sessions) {
+		if err := progress(28, "setup", "Running worktree setup commands..."); err != nil {
+			return err
+		}
+		if err := r.runSetupCommands(ctx, job, sessions); err != nil {
+			return err
+		}
+	}
 	wtRepos := sessionsToRepos(sessions)
 
 	var quality *model.QualityGate

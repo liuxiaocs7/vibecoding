@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -313,5 +314,72 @@ func TestDiffBetween(t *testing.T) {
 	}
 	if !strings.Contains(files[0].Patch, "new.go") && files[0].Path != "new.go" {
 		t.Fatalf("unexpected file %+v", files[0])
+	}
+}
+
+func TestRebaseOntoFastForwardBase(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/rebase"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "feat.txt"), "feat\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat")
+
+	writeFile(t, filepath.Join(dir, "base.txt"), "from main\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "main ahead")
+
+	_, _, _, ahead, behind, err := DiffBetween(dir, "main", "ai-dev/rebase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if behind < 1 || ahead < 1 {
+		t.Fatalf("before rebase ahead=%d behind=%d", ahead, behind)
+	}
+	if err := RebaseOnto(wt, "main"); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, ahead2, behind2, err := DiffBetween(dir, "main", "ai-dev/rebase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if behind2 != 0 {
+		t.Fatalf("after rebase behind=%d ahead=%d", behind2, ahead2)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "base.txt")); err != nil {
+		t.Fatalf("expected base.txt in worktree: %v", err)
+	}
+}
+
+func TestRebaseOntoConflictLeavesWorktree(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "feat")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/conflict"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "README.md"), "feature line\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat edit")
+
+	writeFile(t, filepath.Join(dir, "README.md"), "main line\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "main edit")
+
+	err := RebaseOnto(wt, "main")
+	if err == nil {
+		t.Fatal("expected conflict")
+	}
+	var conflict *RebaseConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("got %T %v", err, err)
+	}
+	if len(conflict.Files) == 0 {
+		t.Fatalf("expected conflict files, got %+v", conflict)
+	}
+	data, _ := os.ReadFile(filepath.Join(wt, "README.md"))
+	if !strings.Contains(string(data), "<<<<<<") && !strings.Contains(string(data), ">>>>>>") && !strings.Contains(string(data), "======") {
+		t.Fatalf("expected conflict markers in worktree file: %q", data)
 	}
 }

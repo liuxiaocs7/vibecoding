@@ -128,6 +128,12 @@ export const TRANSLATIONS = {
     diffCommentRemove: 'Remove comment',
     reworkByComments: 'Rework from comments',
     reworkByCommentsNeed: 'Add at least one inline comment first',
+    setupCommandLabel: 'Worktree setup command',
+    setupCommandHint: 'Optional. Runs inside the isolated worktree before coding (e.g. npm install).',
+    rebaseOnto: 'Rebase onto {base}',
+    rebasing: 'Rebasing…',
+    rebaseOk: 'Rebase finished',
+    rebaseNeedEditor: 'Conflict — open the worktree in an editor to resolve',
 
     // Common Buttons
     cancel: 'Cancel',
@@ -392,6 +398,12 @@ export const TRANSLATIONS = {
     diffCommentRemove: '删除评论',
     reworkByComments: '按评论返工',
     reworkByCommentsNeed: '请先在 diff 上添加至少一条评论',
+    setupCommandLabel: 'Worktree 安装命令',
+    setupCommandHint: '可选。编码前在隔离 worktree 里执行（例如 npm install）。',
+    rebaseOnto: '变基到 {base}',
+    rebasing: '正在变基…',
+    rebaseOk: '变基完成',
+    rebaseNeedEditor: '发生冲突，请用编辑器打开 worktree 解决',
 
     // Common Buttons
     cancel: '取消',

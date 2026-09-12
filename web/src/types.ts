@@ -11,6 +11,7 @@ export interface GitRepo {
   description?: string;
   filesCount?: number;
   url?: string; // 可选的远程备份 URL
+  setupCommand?: string;
 }
 
 export interface ModelConfig {

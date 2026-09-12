@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, FileCode2, GitBranch, Loader2, MessageSquarePlus, SkipForward, Trash2, XCircle } from 'lucide-react';
 import { api } from '../lib/api';
 import { isCommentableDiffLine, parseUnifiedDiff, sumDiffStats } from '../lib/diffFormat';
@@ -12,6 +12,7 @@ interface DiffReviewProps {
   lang?: Language;
   className?: string;
   canComment?: boolean;
+  canRebase?: boolean;
   onCommentsChange?: (comments: DiffComment[]) => void;
 }
 
@@ -69,6 +70,7 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
   lang = 'zh' as Language,
   className,
   canComment = false,
+  canRebase = false,
   onCommentsChange,
 }) => {
   const t = TRANSLATIONS[lang];
@@ -81,10 +83,11 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
   const [head, setHead] = useState<number | null>(null);
   const [dragging, setDragging] = useState(false);
   const [draft, setDraft] = useState('');
+  const [rebasing, setRebasing] = useState(false);
 
   const comments = issue?.reviewComments || [];
 
-  useEffect(() => {
+  const loadDiff = useCallback(() => {
     let cancelled = false;
     setLoading(true);
     setError('');
@@ -93,11 +96,20 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
       .then((d) => {
         if (cancelled) return;
         setData(d);
-        const firstRepo = d.repos?.[0];
-        const firstFile = firstRepo?.files?.[0];
-        if (firstRepo && firstFile) {
-          setSelected({ repoId: firstRepo.repoId, file: firstFile });
-        }
+        setSelected((prev) => {
+          const stillThere =
+            prev &&
+            (d.repos || []).some(
+              (r) => r.repoId === prev.repoId && (r.files || []).some((f) => f.path === prev.file.path)
+            );
+          if (stillThere) return prev;
+          const firstRepo = d.repos?.[0];
+          const firstFile = firstRepo?.files?.[0];
+          if (firstRepo && firstFile) {
+            return { repoId: firstRepo.repoId, file: firstFile };
+          }
+          return null;
+        });
       })
       .catch((e: { message?: string }) => {
         if (!cancelled) setError(e?.message || String(e));
@@ -109,6 +121,8 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
       cancelled = true;
     };
   }, [issueId]);
+
+  useEffect(() => loadDiff(), [loadDiff]);
 
   useEffect(() => {
     const up = () => setDragging(false);
@@ -168,6 +182,22 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
       setEditorMsg(`${app}: ${res.path}`);
     } catch (e: unknown) {
       setEditorMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const maxBehind = Math.max(0, ...(data.repos || []).map((r) => r.behind || 0));
+  const doRebase = async () => {
+    setRebasing(true);
+    setEditorMsg('');
+    try {
+      await api.rebaseIssue(issueId);
+      setEditorMsg(t.rebaseOk);
+      loadDiff();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setEditorMsg(`${msg}. ${t.rebaseNeedEditor}`);
+    } finally {
+      setRebasing(false);
     }
   };
 
@@ -234,6 +264,16 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
           <span className="text-slate-500">
             ahead {data.repos[0].ahead} / behind {data.repos[0].behind}
           </span>
+        ) : null}
+        {canRebase && maxBehind > 0 ? (
+          <button
+            type="button"
+            disabled={rebasing}
+            onClick={() => void doRebase()}
+            className="px-2 py-0.5 rounded border border-amber-500/40 text-amber-800 dark:text-amber-200 hover:bg-amber-500/10 disabled:opacity-50"
+          >
+            {rebasing ? t.rebasing : t.rebaseOnto.replace('{base}', data.baseBranch || 'base')}
+          </button>
         ) : null}
         <button
           type="button"

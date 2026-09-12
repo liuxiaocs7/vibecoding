@@ -137,6 +137,11 @@ export const api = {
   listExecutors: () =>
     request<{ executors: import('../types').ExecutorProbe[]; current: string }>('/api/executors'),
   getIssueDiff: (id: string) => request<import('../types').IssueDiff>(`/api/issues/${id}/diff`),
+  rebaseIssue: (id: string) =>
+    request<{ ok: boolean; baseBranch?: string; repos?: { repoId: string; ahead: number; behind: number; error?: string }[] }>(
+      `/api/issues/${id}/rebase`,
+      { method: 'POST', body: '{}' }
+    ),
   openEditor: (id: string, app: 'cursor' | 'vscode', repoId?: string) =>
     request<{ ok: boolean; app: string; path: string }>(`/api/issues/${id}/open-editor`, {
       method: 'POST',

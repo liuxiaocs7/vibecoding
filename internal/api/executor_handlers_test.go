@@ -275,3 +275,24 @@ func TestApproveMergeSuccessRemovesWorktrees(t *testing.T) {
 		t.Fatalf("worktree path should be removed, stat err=%v", err)
 	}
 }
+
+func TestIssueRebaseRejectedWhenInProgress(t *testing.T) {
+	srv, store := testServer(t)
+	issue := model.Issue{
+		ID: "i-rebase", ProjectID: "p1", Title: "t", Status: model.StatusInProgress,
+		PRInfo: &model.PRInfo{
+			BranchName: "ai-dev/x", BaseBranch: "main", Status: "open",
+			Worktrees: []model.WorktreeRef{{RepoID: "r1", Path: t.TempDir()}},
+		},
+		CreatedAt: model.NowISO(), UpdatedAt: model.NowISO(),
+	}
+	if err := store.UpsertIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/i-rebase/rebase", strings.NewReader("{}"))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 400 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}

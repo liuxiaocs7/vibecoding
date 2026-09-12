@@ -407,6 +407,17 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                         </button>
                       </div>
                     </div>
+                    <div>
+                      <label className={`block text-[10px] mb-1 ${themeConfig.textMuted}`}>{t.setupCommandLabel}</label>
+                      <input
+                        type="text"
+                        value={repo.setupCommand || ''}
+                        onChange={(e) => handleUpdateRepo(idx, 'setupCommand', e.target.value)}
+                        placeholder="npm install"
+                        className={`w-full px-2.5 py-1.5 border rounded text-xs font-mono focus:outline-none focus:border-indigo-500 ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      />
+                      <p className={`text-[10px] mt-1 ${themeConfig.textMuted}`}>{t.setupCommandHint}</p>
+                    </div>
                   </div>
                 ))}
                 {repoMsg && (

@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/issues/{id}", s.handleDeleteIssue)
 	mux.HandleFunc("POST /api/issues/{id}/approve-merge", s.handleApproveMerge)
 	mux.HandleFunc("GET /api/issues/{id}/diff", s.handleIssueDiff)
+	mux.HandleFunc("POST /api/issues/{id}/rebase", s.handleIssueRebase)
 	mux.HandleFunc("POST /api/issues/{id}/open-editor", s.handleOpenEditor)
 
 	mux.HandleFunc("POST /api/repos/validate", s.handleValidateRepo)

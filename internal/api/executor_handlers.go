@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -127,6 +128,65 @@ func (s *Server) handleIssueDiff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, resp)
+}
+
+func (s *Server) handleIssueRebase(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	switch issue.Status {
+	case model.StatusInReview, model.StatusBacklog:
+	default:
+		writeErr(w, 400, "rebase is only available in review or backlog")
+		return
+	}
+	if issue.PRInfo == nil || strings.TrimSpace(issue.PRInfo.BranchName) == "" {
+		writeErr(w, 400, "issue has no Auto-Dev branch yet")
+		return
+	}
+	if len(issue.PRInfo.Worktrees) == 0 {
+		writeErr(w, 400, "no worktree available; run Auto-Dev first")
+		return
+	}
+	base := strings.TrimSpace(issue.PRInfo.BaseBranch)
+	type repoResult struct {
+		RepoID   string `json:"repoId"`
+		RepoName string `json:"repoName"`
+		Ahead    int    `json:"ahead"`
+		Behind   int    `json:"behind"`
+		Error    string `json:"error,omitempty"`
+	}
+	var results []repoResult
+	for _, wt := range issue.PRInfo.Worktrees {
+		if st, err := os.Stat(wt.Path); err != nil || !st.IsDir() {
+			results = append(results, repoResult{RepoID: wt.RepoID, RepoName: wt.RepoName, Error: "worktree missing"})
+			continue
+		}
+		wtBase := base
+		if wtBase == "" {
+			wtBase = "HEAD"
+		}
+		if err := gitx.RebaseOnto(wt.Path, wtBase); err != nil {
+			var conflict *gitx.RebaseConflictError
+			if errors.As(err, &conflict) {
+				writeJSON(w, 400, map[string]any{
+					"error":     conflict.Error(),
+					"conflicts": conflict.Files,
+					"repoId":    wt.RepoID,
+					"repoName":  wt.RepoName,
+				})
+				return
+			}
+			writeErr(w, 400, fmt.Sprintf("%s: %v", wt.RepoName, err))
+			return
+		}
+		_, _, _, ahead, behind, _ := gitx.DiffBetween(wt.Path, wtBase, "HEAD")
+		results = append(results, repoResult{RepoID: wt.RepoID, RepoName: wt.RepoName, Ahead: ahead, Behind: behind})
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "baseBranch": base, "repos": results})
 }
 
 type openEditorBody struct {

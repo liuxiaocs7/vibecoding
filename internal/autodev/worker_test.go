@@ -72,7 +72,7 @@ func setupStoreJob(t *testing.T, repoPath string) (*db.Store, *model.AutoDevJob,
 	proj := model.Project{
 		ID:        "proj-1",
 		Name:      "p",
-		GitRepos: []model.GitRepo{repo},
+		GitRepos:  []model.GitRepo{repo},
 		CreatedAt: model.NowISO(),
 		UpdatedAt: model.NowISO(),
 	}
@@ -430,5 +430,80 @@ func TestRunUsesJobExecutorSnapshot(t *testing.T) {
 	}
 	if seenType != "agent:custom" {
 		t.Fatalf("executor cfg=%q want agent:custom (global was changed to llm)", seenType)
+	}
+}
+
+func TestRunSetupCommandWritesMarker(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	proj, err := store.GetProject("proj-1")
+	if err != nil || proj == nil {
+		t.Fatal(err)
+	}
+	proj.GitRepos[0].SetupCommand = "echo setup-ok > SETUP_OK"
+	if err := store.UpsertProject(*proj); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeExecutor{
+		name: "fake",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hi\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{Changes: []model.SpecFileChange{{
+				FilePath: "hello.txt", RepoName: req.RepoName, Action: "create", Summary: "hi", ModifiedCode: "hi\n",
+			}}}, nil
+		},
+	}
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	r := &Runner{Store: store, Hub: NewHub(), WorktreeRoot: wtRoot, NewExecutor: func(cfg model.ExecutorConfig) (executor.Executor, error) { return fake, nil }}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(wtRoot, "issue-1", "repo-1", "SETUP_OK")
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("setup marker missing: %v", err)
+	}
+	logs, _ := store.ListJobLogs(job.ID)
+	var sawSetup bool
+	for _, l := range logs {
+		if l.Phase == "setup" {
+			sawSetup = true
+			break
+		}
+	}
+	if !sawSetup {
+		t.Fatalf("expected setup log, got %#v", logs)
+	}
+}
+
+func TestRunSetupFailureKeepsWorktree(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	proj, _ := store.GetProject("proj-1")
+	proj.GitRepos[0].SetupCommand = "false"
+	_ = store.UpsertProject(*proj)
+	fake := &fakeExecutor{name: "unused"}
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	r := &Runner{
+		Store: store, Hub: NewHub(), WorktreeRoot: wtRoot,
+		NewExecutor: func(cfg model.ExecutorConfig) (executor.Executor, error) {
+			return fake, nil
+		},
+	}
+	err := r.run(context.Background(), job.ID)
+	if err == nil {
+		t.Fatal("expected setup failure")
+	}
+	if _, err := os.Stat(filepath.Join(wtRoot, "issue-1", "repo-1")); err != nil {
+		t.Fatalf("worktree should remain: %v", err)
+	}
+	if fake.calls.Load() != 0 {
+		t.Fatalf("executor should not run after setup failure, calls=%d", fake.calls.Load())
 	}
 }
