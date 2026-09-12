@@ -119,6 +119,13 @@ export const TRANSLATIONS = {
     gateLint: 'Lint',
     gateRepairRounds: 'Repair rounds',
     gateRealChanges: 'Real changes',
+    diffCommentHint: 'Drag or click commentable lines (+ / − / context), then leave a note.',
+    diffCommentPlaceholder: 'What should change on the selected hunk?',
+    diffCommentAdd: 'Add comment',
+    diffCommentsTitle: 'Inline review comments',
+    diffCommentRemove: 'Remove comment',
+    reworkByComments: 'Rework from comments',
+    reworkByCommentsNeed: 'Add at least one inline comment first',
 
     // Common Buttons
     cancel: 'Cancel',
@@ -374,6 +381,13 @@ export const TRANSLATIONS = {
     gateLint: '静态检查',
     gateRepairRounds: '自愈轮次',
     gateRealChanges: '真实变更',
+    diffCommentHint: '拖选或点击可评论行（+ / − / 上下文），写下意见。',
+    diffCommentPlaceholder: '这段代码需要怎么改？',
+    diffCommentAdd: '添加评论',
+    diffCommentsTitle: '行内评审评论',
+    diffCommentRemove: '删除评论',
+    reworkByComments: '按评论返工',
+    reworkByCommentsNeed: '请先在 diff 上添加至少一条评论',
 
     // Common Buttons
     cancel: '取消',

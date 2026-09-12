@@ -23,7 +23,9 @@ interface IssueReviewTabProps {
   reworkScope: string;
   setReworkScope: React.Dispatch<React.SetStateAction<string>>;
   handleReworkSubmit: () => Promise<void>;
+  handleReworkByComments: () => Promise<void>;
   handleApproveMerge: () => Promise<void>;
+  onCommentsChange: (comments: Issue['reviewComments']) => void;
 }
 
 export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
@@ -38,7 +40,9 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
   reworkScope,
   setReworkScope,
   handleReworkSubmit,
+  handleReworkByComments,
   handleApproveMerge,
+  onCommentsChange,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
   const t = getTranslation(lang);
@@ -84,6 +88,15 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
         {issue.status === 'in_review' && (
           <div className="flex items-center gap-2">
             <button
+              type="button"
+              onClick={() => void handleReworkByComments()}
+              disabled={!issue.reviewComments?.length}
+              className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-800 dark:text-amber-200 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              {t.reworkByComments}
+            </button>
+            <button
               onClick={() => setShowReworkBox(true)}
               className="px-4 py-2 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 text-amber-800 dark:text-amber-200 font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-colors"
             >
@@ -102,7 +115,13 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
       </div>
 
       {/* Real diff review */}
-      <DiffReview issueId={issue.id} lang={lang} />
+      <DiffReview
+        issueId={issue.id}
+        issue={issue}
+        lang={lang}
+        canComment={issue.status === 'in_review'}
+        onCommentsChange={onCommentsChange}
+      />
 
       {showReworkBox && (
         <div className="p-4 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-3">

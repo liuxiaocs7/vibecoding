@@ -317,9 +317,24 @@ type Issue struct {
 	AutoDevProgress   int                `json:"autoDevProgress"`
 	PRInfo            *PRInfo            `json:"prInfo,omitempty"`
 	ReviewFeedback    string             `json:"reviewFeedback,omitempty"`
+	ReviewComments    []DiffComment      `json:"reviewComments,omitempty"`
+	AgentSessionID    string             `json:"agentSessionId,omitempty"`
 	PendingLLM        *PendingLLMSession `json:"pendingLlm,omitempty"`
 	CreatedAt         string             `json:"createdAt"`
 	UpdatedAt         string             `json:"updatedAt"`
+}
+
+// DiffComment is a line-anchored review note on a real unified diff.
+type DiffComment struct {
+	ID        string `json:"id"`
+	RepoID    string `json:"repoId"`
+	Path      string `json:"path"`
+	Side      string `json:"side"` // "new" | "old"
+	StartLine int    `json:"startLine"`
+	EndLine   int    `json:"endLine"`
+	Quote     string `json:"quote,omitempty"`
+	Body      string `json:"body"`
+	CreatedAt string `json:"createdAt"`
 }
 
 func (iss *Issue) HasSubRequirements() bool {

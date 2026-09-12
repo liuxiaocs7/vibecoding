@@ -47,7 +47,7 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 		return Result{}, err
 	}
 	prompt := BuildAgentPrompt(req)
-	args, usedPH := ExpandArgs(resolved.Args, prompt)
+	args, usedPH := ExpandArgs(resolved.Args, prompt, req.Resume)
 	useStdin := resolved.PromptStdin || (!usedPH && e.Cfg.PromptStdin)
 	if !usedPH && !useStdin {
 		// Presets always include {prompt}; custom may rely on stdin only.
@@ -88,9 +88,10 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 	var stderrBuf bytes.Buffer
 	doneOut := make(chan struct{})
 	doneErr := make(chan struct{})
+	sessionCh := make(chan string, 1)
 	go func() {
 		defer close(doneOut)
-		scanAgentOutput(stdout, emit, resolved.DisplayName)
+		sessionCh <- scanAgentOutput(stdout, emit, resolved.DisplayName)
 	}()
 	go func() {
 		defer close(doneErr)
@@ -107,6 +108,7 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 	waitErr := cmd.Wait()
 	<-doneOut
 	<-doneErr
+	sessionID := <-sessionCh
 
 	if runCtx.Err() == context.DeadlineExceeded {
 		return Result{}, fmt.Errorf("agent %s timed out after %s", resolved.DisplayName, timeout)
@@ -119,7 +121,7 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 		return Result{}, fmt.Errorf("agent %s failed: %s", resolved.DisplayName, truncate(msg, 2000))
 	}
 	emit("agent", fmt.Sprintf("%s finished", resolved.DisplayName), "")
-	return Result{}, nil
+	return Result{SessionID: sessionID}, nil
 }
 
 func (e *AgentExecutor) startCmd(ctx context.Context, name string, args []string, dir string, stdin io.Reader) *exec.Cmd {
@@ -140,11 +142,15 @@ func defaultRunner(ctx context.Context, name string, args []string, dir string, 
 	return cmd
 }
 
-func scanAgentOutput(r io.Reader, emit Emit, preset string) {
+func scanAgentOutput(r io.Reader, emit Emit, preset string) string {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	sessionID := ""
 	for sc.Scan() {
 		line := sc.Text()
+		if sid := sessionIDFromJSONLine(line); sid != "" {
+			sessionID = sid
+		}
 		if msg := summarizeStreamJSON(line); msg != "" {
 			emit("agent", msg, "")
 			continue
@@ -153,6 +159,24 @@ func scanAgentOutput(r io.Reader, emit Emit, preset string) {
 			emit("agent", truncate(line, 500), "")
 		}
 	}
+	return sessionID
+}
+
+func sessionIDFromJSONLine(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '{' {
+		return ""
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(line), &obj); err != nil {
+		return ""
+	}
+	for _, k := range []string{"session_id", "sessionId"} {
+		if s, ok := obj[k].(string); ok && strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }
 
 // summarizeStreamJSON extracts a short tool/message line from Claude/Cursor stream-json.

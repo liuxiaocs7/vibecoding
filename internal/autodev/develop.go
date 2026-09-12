@@ -166,7 +166,10 @@ func (r *Runner) developOne(
 	maxHeal := execCfg.Normalize().MaxHeal
 	quality := &model.QualityGate{}
 	healExtra := extra
-	var sessionID string
+	sessionID := strings.TrimSpace(issue.AgentSessionID)
+	if sessionID != "" {
+		_ = r.appendLog(job, "coding", fmt.Sprintf("Resuming prior executor session %s", sessionID), "")
+	}
 
 	for round := 0; round <= maxHeal; round++ {
 		if round > 0 {
@@ -202,6 +205,7 @@ func (r *Runner) developOne(
 			}
 			if res.SessionID != "" {
 				sessionID = res.SessionID
+				r.persistAgentSession(issue, sessionID)
 			}
 			allChanges = append(allChanges, res.Changes...)
 		}
@@ -309,5 +313,18 @@ func (r *Runner) developOne(
 		}
 		_ = r.appendLog(job, "committing", fmt.Sprintf("[%s] committed %s", repo.Name, title), "")
 	}
+	if sessionID != "" {
+		r.persistAgentSession(issue, sessionID)
+	}
 	return quality, nil
+}
+
+func (r *Runner) persistAgentSession(issue *model.Issue, sessionID string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if issue == nil || sessionID == "" || issue.AgentSessionID == sessionID {
+		return
+	}
+	issue.AgentSessionID = sessionID
+	issue.UpdatedAt = model.NowISO()
+	_ = r.Store.UpsertIssue(*issue)
 }

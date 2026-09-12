@@ -328,3 +328,62 @@ func TestRunHealRounds(t *testing.T) {
 		t.Fatalf("expected repair round log, got %#v", logs)
 	}
 }
+
+func TestRunPersistsAndResumesSession(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	issue, _ := store.GetIssue("issue-1")
+	issue.AgentSessionID = "sess-prior"
+	if err := store.UpsertIssue(*issue); err != nil {
+		t.Fatal(err)
+	}
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	var seenResume string
+	fake := &fakeExecutor{
+		name: "fake-resume",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			seenResume = req.Resume
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{
+				SessionID: "sess-next",
+				Changes: []model.SpecFileChange{{
+					FilePath: "hello.txt", RepoName: req.RepoName, Action: "create",
+					Summary: "hello", ModifiedCode: "hello\n",
+				}},
+			}, nil
+		},
+	}
+	r := &Runner{
+		Store:        store,
+		Hub:          NewHub(),
+		WorktreeRoot: wtRoot,
+		NewExecutor:  func(cfg model.ExecutorConfig) (executor.Executor, error) { return fake, nil },
+	}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if seenResume != "sess-prior" {
+		t.Fatalf("resume=%q want sess-prior", seenResume)
+	}
+	saved, _ := store.GetIssue("issue-1")
+	if saved.AgentSessionID != "sess-next" {
+		t.Fatalf("agentSessionId=%q", saved.AgentSessionID)
+	}
+	logs, _ := store.ListJobLogs(job.ID)
+	var sawResumeLog bool
+	for _, l := range logs {
+		if strings.Contains(l.Message, "sess-prior") {
+			sawResumeLog = true
+			break
+		}
+	}
+	if !sawResumeLog {
+		t.Fatalf("expected resume log, got %#v", logs)
+	}
+}

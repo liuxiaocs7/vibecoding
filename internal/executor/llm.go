@@ -78,6 +78,9 @@ func (e *LLMExecutor) generate(ctx context.Context, req CodingRequest) ([]model.
 	specJSON, _ := json.Marshal(req.Spec)
 	user := fmt.Sprintf("Issue: %s\nDescription: %s\n\n%s\nDevSpec JSON:\n%s\n\nRepository context:\n%s\n\nProduce the fileChanges JSON now.",
 		req.Title, req.Description, req.Extra, string(specJSON), repocontext.FormatForPrompt(req.Snapshots))
+	if resume := strings.TrimSpace(req.Resume); resume != "" {
+		user += "\n\nResume / prior session note:\n" + resume
+	}
 
 	text, err := e.Client.Chat(ctx, llm.ChatRequest{
 		ModelConfig: req.ModelConfig,

@@ -89,9 +89,31 @@ export interface SubRequirement {
 export interface AutoDevLog {
   id: string;
   timestamp: string;
-  phase: 'analyzing' | 'branching' | 'coding' | 'testing' | 'linting' | 'committing' | 'completed' | 'failed';
+  phase:
+    | 'analyzing'
+    | 'branching'
+    | 'setup'
+    | 'coding'
+    | 'agent'
+    | 'testing'
+    | 'linting'
+    | 'committing'
+    | 'completed'
+    | 'failed';
   message: string;
   details?: string;
+}
+
+export interface DiffComment {
+  id: string;
+  repoId: string;
+  path: string;
+  side: 'new' | 'old' | string;
+  startLine: number;
+  endLine: number;
+  quote?: string;
+  body: string;
+  createdAt: string;
 }
 
 export interface QualityGate {
@@ -217,6 +239,8 @@ export interface Issue {
   autoDevProgress: number; // 0 - 100
   prInfo?: PRInfo;
   reviewFeedback?: string;
+  reviewComments?: DiffComment[];
+  agentSessionId?: string;
   pendingLlm?: PendingLLMSession;
   createdAt: string;
   updatedAt: string;

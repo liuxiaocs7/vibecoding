@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Issue, GitRepo, ModelConfig, BranchPrefixConfig, SubRequirement } from '../../types';
+import { Issue, GitRepo, ModelConfig, BranchPrefixConfig, SubRequirement, DiffComment } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { api } from '../../lib/api';
 import { hasSubRequirements, specMarkdownForExport, visibleSpec } from '../../lib/subreq';
+import { formatReviewComments } from '../../lib/reviewComments';
 import { saveTextFile } from '../../lib/savefile';
 import { useIssueChat } from './useIssueChat';
 import { IssueDetailHeader } from './IssueDetailHeader';
@@ -223,7 +224,31 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
       setChatError(lang === 'zh' ? '请输入评审修改意见' : 'Enter review feedback');
       return;
     }
+    await submitRework(reworkFeedback, false);
+  };
 
+  const handleReworkByComments = async () => {
+    const comments = issue.reviewComments || [];
+    if (!comments.length) {
+      setChatError(t.reworkByCommentsNeed);
+      return;
+    }
+    const repoName = (id: string) => gitRepos.find((r) => r.id === id)?.name || id;
+    const formatted = formatReviewComments(comments, repoName);
+    const extra = reworkFeedback.trim();
+    const combined = extra ? `${extra}\n\n${formatted}` : formatted;
+    await submitRework(combined, true);
+  };
+
+  const handleCommentsChange = (next: DiffComment[] | undefined) => {
+    onUpdateIssue({
+      ...issue,
+      reviewComments: next || [],
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
+  const submitRework = async (feedback: string, fromComments: boolean) => {
     setShowReworkBox(false);
     setActiveTab('chat');
     const scope = reworkScope;
@@ -238,13 +263,14 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
 
     const prompt =
       lang === 'zh'
-        ? `开发者在评审中指出了以下问题，需要二次修改代码与开发文档（范围: ${targetLabel}）:\n"${reworkFeedback}"\n请重新分析并更新对应待开发文档。`
-        : `Reviewer requested rework for ${targetLabel}:\n"${reworkFeedback}"\nPlease revise the Dev Spec(s) accordingly.`;
+        ? `开发者在评审中指出了以下问题，需要二次修改代码与开发文档（范围: ${targetLabel}）:\n"${feedback}"\n请重新分析并更新对应待开发文档。`
+        : `Reviewer requested rework for ${targetLabel}:\n"${feedback}"\nPlease revise the Dev Spec(s) accordingly.`;
 
     const updatedIssue: Issue = {
       ...issue,
-      reviewFeedback: reworkFeedback,
+      reviewFeedback: feedback,
       reworkSubId: scope === 'all' ? '' : scope,
+      reviewComments: fromComments ? [] : issue.reviewComments,
       autoDevLogs: [
         ...issue.autoDevLogs,
         {
@@ -253,19 +279,17 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           phase: 'analyzing',
           message:
             lang === 'zh'
-              ? `收到二次评审意见（${targetLabel}）: "${reworkFeedback}". 正在更新 Dev Spec...`
-              : `Rework feedback (${targetLabel}): "${reworkFeedback}". Updating Dev Spec...`,
+              ? `收到二次评审意见（${targetLabel}）: "${feedback}". 正在更新 Dev Spec...`
+              : `Rework feedback (${targetLabel}): "${feedback}". Updating Dev Spec...`,
         },
       ],
     };
 
     onUpdateIssue(updatedIssue);
-    const feedback = reworkFeedback;
     setReworkFeedback('');
 
     await handleSendMessage(prompt, { forceSpecSync: true, scope });
     onStartAutoDev(issue.id, scope === 'all' ? undefined : scope);
-    void feedback;
   };
 
   const handleApproveMerge = async () => {
@@ -447,7 +471,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               reworkScope={reworkScope}
               setReworkScope={setReworkScope}
               handleReworkSubmit={handleReworkSubmit}
+              handleReworkByComments={handleReworkByComments}
               handleApproveMerge={handleApproveMerge}
+              onCommentsChange={handleCommentsChange}
             />
           )}
         </div>

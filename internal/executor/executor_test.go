@@ -120,7 +120,7 @@ func TestResolvePresetAndExpand(t *testing.T) {
 	if c.Command != "agent" {
 		t.Fatalf("cursor fallback: got %q", c.Command)
 	}
-	args, used := ExpandArgs(c.Args, "HELLO")
+	args, used := ExpandArgs(c.Args, "HELLO", "")
 	if !used {
 		t.Fatal("expected placeholder")
 	}
@@ -151,12 +151,38 @@ func TestResolvePresetAndExpand(t *testing.T) {
 	if err != nil || claude.Command != "claude" {
 		t.Fatalf("%v %#v", err, claude)
 	}
+	hasSkip := false
+	hasResumePH := false
 	for _, a := range claude.Args {
 		if a == "--dangerously-skip-permissions" {
-			return
+			hasSkip = true
+		}
+		if a == "{session}" {
+			hasResumePH = true
 		}
 	}
-	t.Fatal("claude missing skip-permissions")
+	if !hasSkip {
+		t.Fatal("claude missing skip-permissions")
+	}
+	if !hasResumePH {
+		t.Fatal("claude missing {session}")
+	}
+	noSess, _ := ExpandArgs(claude.Args, "PROMPT", "")
+	for _, a := range noSess {
+		if a == "--resume" || a == "{session}" || a == "" {
+			t.Fatalf("empty session should drop resume: %v", noSess)
+		}
+	}
+	withSess, _ := ExpandArgs(claude.Args, "PROMPT", "sess-9")
+	foundResume := false
+	for i, a := range withSess {
+		if a == "--resume" && i+1 < len(withSess) && withSess[i+1] == "sess-9" {
+			foundResume = true
+		}
+	}
+	if !foundResume {
+		t.Fatalf("expected --resume sess-9 in %v", withSess)
+	}
 }
 
 func TestProbeMissingBinaries(t *testing.T) {
@@ -251,7 +277,7 @@ func TestAgentExecutorFakeCommand(t *testing.T) {
 	}
 	script := filepath.Join(dir, "fake.sh")
 	// Writes a file and echoes stream-json + plain lines.
-	body := "#!/bin/sh\necho '{\"type\":\"tool_use\",\"name\":\"Write\"}'\necho hello-agent\necho after > marker.txt\n"
+	body := "#!/bin/sh\necho '{\"type\":\"system\",\"session_id\":\"sess-from-cli\"}'\necho '{\"type\":\"tool_use\",\"name\":\"Write\"}'\necho hello-agent\necho after > marker.txt\n"
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +295,7 @@ func TestAgentExecutorFakeCommand(t *testing.T) {
 	emit := func(phase, msg, details string) {
 		logs = append(logs, phase+":"+msg)
 	}
-	_, err := ex.Run(context.Background(), CodingRequest{
+	res, err := ex.Run(context.Background(), CodingRequest{
 		RepoPath: dir,
 		RepoName: "demo",
 		Title:    "t",
@@ -277,6 +303,9 @@ func TestAgentExecutorFakeCommand(t *testing.T) {
 	}, emit)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if res.SessionID != "sess-from-cli" {
+		t.Fatalf("session=%q", res.SessionID)
 	}
 	data, _ := os.ReadFile(filepath.Join(dir, "marker.txt"))
 	if strings.TrimSpace(string(data)) != "after" {
@@ -319,6 +348,12 @@ func TestSummarizeStreamJSON(t *testing.T) {
 		t.Fatal(got)
 	}
 	if got := summarizeStreamJSON("plain"); got != "" {
+		t.Fatal(got)
+	}
+	if got := sessionIDFromJSONLine(`{"type":"system","session_id":"abc-1"}`); got != "abc-1" {
+		t.Fatal(got)
+	}
+	if got := sessionIDFromJSONLine(`{"sessionId":"xyz"}`); got != "xyz" {
 		t.Fatal(got)
 	}
 }
