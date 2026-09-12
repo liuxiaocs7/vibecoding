@@ -387,3 +387,48 @@ func TestRunPersistsAndResumesSession(t *testing.T) {
 		t.Fatalf("expected resume log, got %#v", logs)
 	}
 }
+
+func TestRunUsesJobExecutorSnapshot(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	_ = store.PutExecutorConfig(model.ExecutorConfig{Type: "llm", MaxHeal: 0})
+	snap := model.ExecutorConfig{Type: "agent", Preset: "custom", Command: "echo", Args: []string{"{prompt}"}, MaxHeal: 0}
+	job.ExecutorConfig = &snap
+	job.Executor = "agent:custom"
+	if err := store.UpdateJob(job); err != nil {
+		t.Fatal(err)
+	}
+	_ = store.PutExecutorConfig(model.ExecutorConfig{Type: "llm", MaxHeal: 2})
+
+	var seenType string
+	fake := &fakeExecutor{
+		name: "from-snapshot",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "go.mod"), []byte("module demo\n\ngo 1.22\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("ok\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{Changes: []model.SpecFileChange{{
+				FilePath: "hello.txt", RepoName: req.RepoName, Action: "create", Summary: "ok", ModifiedCode: "ok\n",
+			}}}, nil
+		},
+	}
+	r := &Runner{
+		Store:        store,
+		Hub:          NewHub(),
+		WorktreeRoot: filepath.Join(t.TempDir(), "worktrees"),
+		NewExecutor: func(cfg model.ExecutorConfig) (executor.Executor, error) {
+			seenType = cfg.Type + ":" + cfg.Preset
+			return fake, nil
+		},
+	}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if seenType != "agent:custom" {
+		t.Fatalf("executor cfg=%q want agent:custom (global was changed to llm)", seenType)
+	}
+}

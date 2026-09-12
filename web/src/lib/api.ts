@@ -99,6 +99,8 @@ export interface AutoDevJob {
   phase?: string;
   error?: string;
   prInfo?: PRInfo;
+  executor?: string;
+  executorConfig?: import('../types').ExecutorConfig;
   createdAt: string;
   updatedAt: string;
 }
@@ -201,10 +203,14 @@ export const api = {
       body: JSON.stringify({ filename, contents }),
     }),
 
-  startAutoDev: (issueId: string, subRequirementId?: string) =>
+  startAutoDev: (issueId: string, subRequirementId?: string, executor?: import('../types').ExecutorConfig) =>
     request<AutoDevJob>('/api/auto-dev/start', {
       method: 'POST',
-      body: JSON.stringify({ issueId, subRequirementId: subRequirementId || undefined }),
+      body: JSON.stringify({
+        issueId,
+        subRequirementId: subRequirementId || undefined,
+        executor: executor || undefined,
+      }),
     }),
 
   cancelAutoDev: (jobId: string) =>

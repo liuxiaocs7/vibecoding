@@ -4,16 +4,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ymhhh/vibecoding/internal/executor"
 	"github.com/ymhhh/vibecoding/internal/model"
 )
 
 func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		IssueID          string `json:"issueId"`
-		SubRequirementID string `json:"subRequirementId"`
+		IssueID          string                `json:"issueId"`
+		SubRequirementID string                `json:"subRequirementId"`
+		Executor         *model.ExecutorConfig `json:"executor,omitempty"`
 	}
 	if err := decodeJSON(r, &body); err != nil || body.IssueID == "" {
 		writeErr(w, 400, "issueId required")
@@ -46,18 +49,28 @@ func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	execCfg, err := s.resolveStartExecutor(body.Executor)
+	if err != nil {
+		writeErr(w, 400, err.Error())
+		return
+	}
+	execName := executor.DisplayName(execCfg)
+	if issue.AgentSessionID != "" && issue.PRInfo != nil && strings.TrimSpace(issue.PRInfo.Executor) != "" && issue.PRInfo.Executor != execName {
+		issue.AgentSessionID = ""
+	}
+
 	issue.Status = model.StatusInProgress
 	issue.AutoDevProgress = 5
-	startMsg := "Starting VibeBot Auto-Dev job..."
+	startMsg := fmt.Sprintf("Starting VibeBot Auto-Dev job (%s)...", execName)
 	if issue.HasSubRequirements() {
 		if issue.ReworkSubID != "" {
 			title := issue.ReworkSubID
 			if sub := issue.SubByID(issue.ReworkSubID); sub != nil {
 				title = sub.Title
 			}
-			startMsg = fmt.Sprintf("Starting sequential Auto-Dev rework for sub-requirement: %s", title)
+			startMsg = fmt.Sprintf("Starting sequential Auto-Dev rework for sub-requirement: %s (%s)", title, execName)
 		} else {
-			startMsg = fmt.Sprintf("Starting sequential Auto-Dev for %d sub-requirement(s)...", len(issue.SubRequirements))
+			startMsg = fmt.Sprintf("Starting sequential Auto-Dev for %d sub-requirement(s) (%s)...", len(issue.SubRequirements), execName)
 		}
 	}
 	issue.AutoDevLogs = append(issue.AutoDevLogs, model.AutoDevLog{
@@ -73,8 +86,49 @@ func (s *Server) handleAutoDevStart(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err.Error())
 		return
 	}
+	cfgCopy := execCfg
+	job.ExecutorConfig = &cfgCopy
+	job.Executor = execName
+	if err := s.Store.UpdateJob(job); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
 	s.Runner.Start(job.ID)
 	writeJSON(w, 202, job)
+}
+
+func (s *Server) resolveStartExecutor(override *model.ExecutorConfig) (model.ExecutorConfig, error) {
+	cfg, _ := s.Store.GetExecutorConfig()
+	if override != nil {
+		cfg = *override
+	}
+	cfg = cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		return cfg, err
+	}
+	if cfg.Type == "agent" {
+		miss := executor.MissingBinaries(cfg, nil)
+		if len(miss) > 0 {
+			hint := "missing binary: " + strings.Join(miss, " / ")
+			mc, _ := s.Store.GetModelConfig()
+			configured, _ := model.MaskKey(mc.OpenAIAPIKey)
+			for _, p := range executor.Probe(executor.ProbeOptions{LLMConfigured: configured}) {
+				if p.Type == "agent" && p.Preset == cfg.Preset && strings.TrimSpace(p.Hint) != "" {
+					hint = p.Hint
+					break
+				}
+			}
+			return cfg, fmt.Errorf("%s", hint)
+		}
+	}
+	if override != nil && cfg.Type != "agent" {
+		mc, _ := s.Store.GetModelConfig()
+		configured, _ := model.MaskKey(mc.OpenAIAPIKey)
+		if !configured {
+			return cfg, fmt.Errorf("LLM API key not configured")
+		}
+	}
+	return cfg, nil
 }
 
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {

@@ -475,16 +475,17 @@ const (
 )
 
 type AutoDevJob struct {
-	ID        string           `json:"id"`
-	IssueID   string           `json:"issueId"`
-	Status    AutoDevJobStatus `json:"status"`
-	Progress  int              `json:"progress"`
-	Phase     string           `json:"phase,omitempty"`
-	Error     string           `json:"error,omitempty"`
-	PRInfo    *PRInfo          `json:"prInfo,omitempty"`
-	Executor  string           `json:"executor,omitempty"`
-	CreatedAt string           `json:"createdAt"`
-	UpdatedAt string           `json:"updatedAt"`
+	ID             string           `json:"id"`
+	IssueID        string           `json:"issueId"`
+	Status         AutoDevJobStatus `json:"status"`
+	Progress       int              `json:"progress"`
+	Phase          string           `json:"phase,omitempty"`
+	Error          string           `json:"error,omitempty"`
+	PRInfo         *PRInfo          `json:"prInfo,omitempty"`
+	Executor       string           `json:"executor,omitempty"`
+	ExecutorConfig *ExecutorConfig  `json:"executorConfig,omitempty"`
+	CreatedAt      string           `json:"createdAt"`
+	UpdatedAt      string           `json:"updatedAt"`
 }
 
 type JobEvent struct {

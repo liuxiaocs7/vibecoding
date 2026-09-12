@@ -84,7 +84,13 @@ CREATE INDEX IF NOT EXISTS idx_jobs_issue ON autodev_jobs(issue_id);
 CREATE INDEX IF NOT EXISTS idx_logs_job ON autodev_logs(job_id);
 `
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	// Existing installs keep CREATE TABLE IF NOT EXISTS; add columns best-effort.
+	_, _ = s.db.Exec(`ALTER TABLE autodev_jobs ADD COLUMN executor TEXT NOT NULL DEFAULT ''`)
+	_, _ = s.db.Exec(`ALTER TABLE autodev_jobs ADD COLUMN executor_config TEXT`)
+	return nil
 }
 
 func (s *Store) GetSetting(key string, dest any) (bool, error) {
@@ -417,8 +423,8 @@ func (s *Store) CreateJob(issueID string) (*model.AutoDevJob, error) {
 		UpdatedAt: now,
 	}
 	_, err := s.db.Exec(`
-INSERT INTO autodev_jobs(id, issue_id, status, progress, phase, error, pr_info, created_at, updated_at)
-VALUES(?, ?, ?, ?, ?, ?, NULL, ?, ?)
+INSERT INTO autodev_jobs(id, issue_id, status, progress, phase, error, pr_info, executor, executor_config, created_at, updated_at)
+VALUES(?, ?, ?, ?, ?, ?, NULL, '', NULL, ?, ?)
 `, job.ID, job.IssueID, job.Status, job.Progress, "", "", job.CreatedAt, job.UpdatedAt)
 	if err != nil {
 		return nil, err
@@ -429,20 +435,32 @@ VALUES(?, ?, ?, ?, ?, ?, NULL, ?, ?)
 func (s *Store) GetJob(id string) (*model.AutoDevJob, error) {
 	var job model.AutoDevJob
 	var prRaw sql.NullString
+	var execName sql.NullString
+	var execCfgRaw sql.NullString
 	err := s.db.QueryRow(`
-SELECT id, issue_id, status, progress, phase, error, pr_info, created_at, updated_at
+SELECT id, issue_id, status, progress, phase, error, pr_info, executor, executor_config, created_at, updated_at
 FROM autodev_jobs WHERE id = ?
-`, id).Scan(&job.ID, &job.IssueID, &job.Status, &job.Progress, &job.Phase, &job.Error, &prRaw, &job.CreatedAt, &job.UpdatedAt)
+`, id).Scan(&job.ID, &job.IssueID, &job.Status, &job.Progress, &job.Phase, &job.Error, &prRaw, &execName, &execCfgRaw, &job.CreatedAt, &job.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
+	if execName.Valid {
+		job.Executor = execName.String
+	}
 	if prRaw.Valid && prRaw.String != "" {
 		var pr model.PRInfo
 		if err := json.Unmarshal([]byte(prRaw.String), &pr); err == nil {
 			job.PRInfo = &pr
+		}
+	}
+	if execCfgRaw.Valid && execCfgRaw.String != "" {
+		var cfg model.ExecutorConfig
+		if err := json.Unmarshal([]byte(execCfgRaw.String), &cfg); err == nil {
+			n := cfg.Normalize()
+			job.ExecutorConfig = &n
 		}
 	}
 	return &job, nil
@@ -455,9 +473,14 @@ func (s *Store) UpdateJob(job *model.AutoDevJob) error {
 		b, _ := json.Marshal(job.PRInfo)
 		pr = string(b)
 	}
+	var execCfg any
+	if job.ExecutorConfig != nil {
+		b, _ := json.Marshal(job.ExecutorConfig.Normalize())
+		execCfg = string(b)
+	}
 	_, err := s.db.Exec(`
-UPDATE autodev_jobs SET status=?, progress=?, phase=?, error=?, pr_info=?, updated_at=? WHERE id=?
-`, job.Status, job.Progress, job.Phase, job.Error, pr, job.UpdatedAt, job.ID)
+UPDATE autodev_jobs SET status=?, progress=?, phase=?, error=?, pr_info=?, executor=?, executor_config=?, updated_at=? WHERE id=?
+`, job.Status, job.Progress, job.Phase, job.Error, pr, job.Executor, execCfg, job.UpdatedAt, job.ID)
 	return err
 }
 

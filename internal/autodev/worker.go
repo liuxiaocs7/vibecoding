@@ -136,9 +136,16 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 	}
 
 	execCfg, _ := r.Store.GetExecutorConfig()
+	if job.ExecutorConfig != nil {
+		execCfg = *job.ExecutorConfig
+	}
 	execCfg = execCfg.Normalize()
 	execName := executor.DisplayName(execCfg)
 	job.Executor = execName
+	if job.ExecutorConfig == nil {
+		cfgCopy := execCfg
+		job.ExecutorConfig = &cfgCopy
+	}
 	_ = r.Store.UpdateJob(job)
 
 	prefix := "ai-dev/"

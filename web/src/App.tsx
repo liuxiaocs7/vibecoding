@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Project, Issue, ModelConfig, IssueStatus } from './types';
+import { Project, Issue, ModelConfig, IssueStatus, ExecutorConfig } from './types';
 import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './lib/storage';
 import { Language, ThemeStyle, getTranslation } from './lib/i18n';
 import { THEME_CONFIGS } from './lib/theme';
@@ -10,6 +10,7 @@ import { IssueDetailModal, ISSUE_SESSION_DOCK_ID } from './components/IssueDetai
 import { ProjectModal } from './components/ProjectModal';
 import { CreateIssueModal } from './components/CreateIssueModal';
 import { GlobalSettingsModal } from './components/GlobalSettingsModal';
+import { StartAutoDevModal } from './components/StartAutoDevModal';
 import {
   FolderKanban,
   Settings,
@@ -56,6 +57,7 @@ export default function App() {
   const [editingProject, setEditingProject] = useState<Project | null>(null);
   const [isCreateIssueModalOpen, setIsCreateIssueModalOpen] = useState(false);
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
+  const [startPick, setStartPick] = useState<{ issueId: string; subRequirementId?: string } | null>(null);
 
   const autoDevJobs = useRef<Map<string, string>>(new Map()); // issueId -> jobId
   const unsubscribers = useRef<Map<string, () => void>>(new Map());
@@ -239,7 +241,7 @@ export default function App() {
     [activeProjectId, patchIssueLocal, refreshIssues, showToast]
   );
 
-  const handleStartAutoDev = async (issueId: string, subRequirementId?: string) => {
+  const handleStartAutoDev = (issueId: string, subRequirementId?: string) => {
     const targetIssue = issues.find((i) => i.id === issueId);
     if (!targetIssue) return;
     if (targetIssue.status === 'in_progress' && autoDevJobs.current.has(issueId)) {
@@ -254,9 +256,15 @@ export default function App() {
       showToast('error', t.autoDevNeedsRepo);
       return;
     }
+    setStartPick({ issueId, subRequirementId });
+  };
+
+  const launchAutoDev = async (issueId: string, subRequirementId: string | undefined, executor: ExecutorConfig) => {
+    const targetIssue = issues.find((i) => i.id === issueId);
+    if (!targetIssue) return;
 
     try {
-      const job = await api.startAutoDev(issueId, subRequirementId);
+      const job = await api.startAutoDev(issueId, subRequirementId, executor);
       autoDevJobs.current.set(issueId, job.id);
       patchIssueLocal({
         ...targetIssue,
@@ -804,6 +812,20 @@ export default function App() {
           onClose={() => setIsGlobalSettingsOpen(false)}
           config={globalModelConfig}
           onSave={handleSaveGlobalConfig}
+          themeStyle={themeStyle}
+          lang={language}
+        />
+      )}
+
+      {startPick && (
+        <StartAutoDevModal
+          isOpen
+          onClose={() => setStartPick(null)}
+          onConfirm={(cfg) => {
+            const pick = startPick;
+            setStartPick(null);
+            void launchAutoDev(pick.issueId, pick.subRequirementId, cfg);
+          }}
           themeStyle={themeStyle}
           lang={language}
         />
