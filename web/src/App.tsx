@@ -425,9 +425,20 @@ export default function App() {
 
   const handleDeleteIssue = async (issueId: string) => {
     try {
+      if (autoDevJobs.current.has(issueId)) {
+        try {
+          await api.cancelAutoDevByIssue(issueId);
+        } catch {
+          /* still delete the issue */
+        }
+        autoDevJobs.current.delete(issueId);
+        unsubscribers.current.get(issueId)?.();
+        unsubscribers.current.delete(issueId);
+      }
       await api.deleteIssue(issueId);
       setIssues((prev) => prev.filter((i) => i.id !== issueId));
       dismissIssueSession(issueId);
+      showToast('success', t.issueDeleted);
     } catch (err: any) {
       showToast('error', err.message);
     }

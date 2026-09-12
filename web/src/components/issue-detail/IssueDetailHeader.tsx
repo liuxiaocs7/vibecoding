@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Issue } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
@@ -30,6 +30,22 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
   const t = getTranslation(lang);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const deleteWrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setConfirmingDelete(false);
+  }, [issue.id]);
+
+  useEffect(() => {
+    if (!confirmingDelete) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (deleteWrapRef.current?.contains(e.target as Node)) return;
+      setConfirmingDelete(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    return () => document.removeEventListener('pointerdown', onPointerDown, true);
+  }, [confirmingDelete]);
 
   return (
     <div className={`p-5 border-b flex items-center justify-between gap-4 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
@@ -67,9 +83,11 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
       </div>
 
       <div className="flex items-center gap-2 shrink-0">
-        {issue.status === 'backlog' && specReadyForDev(issue) && (
+        {issue.status === 'backlog' && specReadyForDev(issue) && !confirmingDelete && (
           <button
-            onClick={() => {
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
               onStartAutoDev(issue.id);
               setActiveTab('console');
             }}
@@ -83,7 +101,10 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
         {onMinimize && (
           <button
             type="button"
-            onClick={onMinimize}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMinimize();
+            }}
             aria-label={analyzing ? t.minimizeWhileAnalyzing : t.minimizeIssue}
             className={`p-2 rounded-xl transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
             title={analyzing ? t.minimizeWhileAnalyzing : t.minimizeIssue}
@@ -92,20 +113,56 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
           </button>
         )}
         {onDeleteIssue && (
-          <button
-            onClick={() => {
-              if (window.confirm(t.deleteIssueConfirm)) {
-                onDeleteIssue(issue.id);
-              }
-            }}
-            className={`p-2 rounded-xl transition-colors text-rose-400 hover:bg-rose-500/10`}
-            title={t.deleteIssueTitle}
-          >
-            <Trash2 className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-1.5" ref={deleteWrapRef}>
+            {confirmingDelete ? (
+              <>
+                <span className={`text-[11px] font-medium whitespace-nowrap ${themeConfig.textPrimary}`}>
+                  {t.deleteIssueConfirm}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmingDelete(false);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold ${themeConfig.textSecondary} hover:bg-black/5 dark:hover:bg-white/10`}
+                >
+                  {t.cancel}
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmingDelete(false);
+                    onDeleteIssue(issue.id);
+                  }}
+                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold text-white bg-rose-500 hover:bg-rose-600"
+                >
+                  {t.confirm}
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setConfirmingDelete(true);
+                }}
+                className="p-2 rounded-xl transition-colors text-rose-400 hover:bg-rose-500/10"
+                title={t.deleteIssueTitle}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
         )}
         <button
-          onClick={onClose}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onClose();
+          }}
           aria-label={analyzing ? t.closeWhileAnalyzing : t.closeIssue}
           className={`p-2 rounded-xl transition-colors ${themeConfig.textSecondary} hover:${themeConfig.textPrimary} hover:bg-black/5 dark:hover:bg-white/10`}
           title={analyzing ? t.closeWhileAnalyzing : t.closeIssue}

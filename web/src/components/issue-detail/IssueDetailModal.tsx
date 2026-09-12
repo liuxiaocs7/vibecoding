@@ -314,7 +314,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 sm:p-6"
-      onClick={onMinimize}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onMinimize();
+      }}
     >
       <div
         className={`w-full max-w-5xl border rounded-2xl shadow-2xl overflow-hidden flex flex-col h-[90vh] ${themeConfig.modalBg}`}

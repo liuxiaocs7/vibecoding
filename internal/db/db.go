@@ -381,8 +381,29 @@ ON CONFLICT(id) DO UPDATE SET data = excluded.data, project_id = excluded.projec
 }
 
 func (s *Store) DeleteIssue(id string) error {
-	_, err := s.db.Exec(`DELETE FROM issues WHERE id = ?`, id)
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM autodev_logs WHERE issue_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM autodev_jobs WHERE issue_id = ?`, id); err != nil {
+		return err
+	}
+	res, err := tx.Exec(`DELETE FROM issues WHERE id = ?`, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CreateJob(issueID string) (*model.AutoDevJob, error) {

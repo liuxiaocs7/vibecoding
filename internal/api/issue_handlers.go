@@ -1,6 +1,8 @@
 package api
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -95,6 +97,10 @@ func validateStatusTransition(old, neu *model.Issue) error {
 
 func (s *Server) handleDeleteIssue(w http.ResponseWriter, r *http.Request) {
 	if err := s.Store.DeleteIssue(r.PathValue("id")); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, 404, "issue not found")
+			return
+		}
 		writeErr(w, 500, err.Error())
 		return
 	}
