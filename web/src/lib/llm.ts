@@ -7,6 +7,15 @@ export function isRetryableLLMError(err: unknown): boolean {
   const msg = String((err as { message?: string })?.message || err || '').toLowerCase();
   if (!msg) return false;
   if (msg.includes('401') || msg.includes('403') || msg.includes('invalid api')) return false;
+  // Client/server gate errors — retrying will not help.
+  if (
+    msg.includes('accept the requirement') ||
+    msg.includes('associate at least one') ||
+    msg.includes('pick a sub-requirement') ||
+    msg.includes('requirement document required')
+  ) {
+    return false;
+  }
   return (
     msg.includes('timeout') ||
     msg.includes('deadline exceeded') ||

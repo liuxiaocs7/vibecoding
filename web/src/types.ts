@@ -1,5 +1,8 @@
 export type Priority = 'low' | 'medium' | 'high' | 'urgent';
 
+/** Maps to project branch prefixes: feature → featurePrefix, bugfix → bugfixPrefix, hotfix → hotfixPrefix. */
+export type IssueKind = 'feature' | 'bugfix' | 'hotfix';
+
 export type IssueStatus = 'requirements' | 'backlog' | 'in_progress' | 'in_review' | 'completed';
 
 export interface GitRepo {
@@ -245,6 +248,8 @@ export interface Issue {
   description: string;
   attachments?: IssueAttachment[];
   priority: Priority;
+  /** feature | bugfix | hotfix — drives git branch prefix during auto-dev. */
+  kind?: IssueKind;
   status: IssueStatus;
   associatedRepoIds: string[];
   assignee: string;

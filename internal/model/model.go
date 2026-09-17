@@ -18,6 +18,27 @@ const (
 	PriorityUrgent Priority = "urgent"
 )
 
+// IssueKind classifies the work item and maps to a git branch prefix.
+type IssueKind string
+
+const (
+	IssueKindFeature IssueKind = "feature" // 开发需求 → featurePrefix
+	IssueKindBugfix  IssueKind = "bugfix"  // 缺陷修复 → bugfixPrefix
+	IssueKindHotfix  IssueKind = "hotfix"  // 紧急修复 → hotfixPrefix
+)
+
+// NormalizeIssueKind returns a valid kind; empty/unknown → feature.
+func NormalizeIssueKind(k IssueKind) IssueKind {
+	switch IssueKind(strings.TrimSpace(string(k))) {
+	case IssueKindBugfix:
+		return IssueKindBugfix
+	case IssueKindHotfix:
+		return IssueKindHotfix
+	default:
+		return IssueKindFeature
+	}
+}
+
 type IssueStatus string
 
 const (
@@ -69,6 +90,47 @@ func DefaultBranchPrefix() BranchPrefixConfig {
 		AutoDevPrefix:  "ai-dev/",
 		ReleasePrefix:  "release/",
 	}
+}
+
+// PrefixForKind returns the configured branch prefix for an issue kind.
+func (c *BranchPrefixConfig) PrefixForKind(kind IssueKind) string {
+	def := DefaultBranchPrefix()
+	if c == nil {
+		return def.PrefixForKind(kind)
+	}
+	switch NormalizeIssueKind(kind) {
+	case IssueKindBugfix:
+		if p := strings.TrimSpace(c.BugfixPrefix); p != "" {
+			return p
+		}
+		return def.BugfixPrefix
+	case IssueKindHotfix:
+		if p := strings.TrimSpace(c.HotfixPrefix); p != "" {
+			return p
+		}
+		return def.HotfixPrefix
+	default:
+		if p := strings.TrimSpace(c.FeaturePrefix); p != "" {
+			return p
+		}
+		return def.FeaturePrefix
+	}
+}
+
+// BranchNameForIssue builds "{prefix}issue-{shortId}".
+func BranchNameForIssue(prefix, issueID string) string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		prefix = "feature/"
+	}
+	shortID := strings.TrimSpace(issueID)
+	if len(shortID) > 8 {
+		shortID = shortID[len(shortID)-8:]
+	}
+	if shortID == "" {
+		shortID = "unknown"
+	}
+	return prefix + "issue-" + shortID
 }
 
 func DefaultModelConfig() ModelConfig {
@@ -333,6 +395,7 @@ type Issue struct {
 	Description       string             `json:"description"`
 	Attachments       []IssueAttachment  `json:"attachments,omitempty"`
 	Priority          Priority           `json:"priority"`
+	Kind              IssueKind          `json:"kind,omitempty"` // feature | bugfix | hotfix
 	Status            IssueStatus        `json:"status"`
 	AssociatedRepoIDs []string           `json:"associatedRepoIds"`
 	Assignee          string             `json:"assignee"`
@@ -516,7 +579,9 @@ func (iss *Issue) TouchReqDoc() {
 
 // SpecReadyForDev reports whether Auto-Dev / backlog can proceed.
 // Legacy (Dev Spec only): markdown present.
-// New flow: accepted ReqDoc, non-stale design, markdown, and non-empty fileChanges.
+// New flow: accepted ReqDoc, non-stale design, and design markdown.
+// fileChanges are recommended (UI warns) but not a hard gate — models sometimes
+// omit the array while still producing a usable Markdown design.
 func (iss *Issue) SpecReadyForDev() bool {
 	if iss == nil {
 		return false
@@ -530,7 +595,7 @@ func (iss *Issue) SpecReadyForDev() bool {
 	if !iss.RequirementAccepted() || iss.DesignStale() {
 		return false
 	}
-	return iss.hasNonEmptyFileChanges()
+	return true
 }
 
 // HasUnverifiedModifies is true when any modify/delete change is not verified against disk.

@@ -4,6 +4,7 @@ import { Language, getTranslation } from '../../lib/i18n';
 import { sendLLMChat, isRetryableLLMError, LLM_AUTO_ATTEMPTS } from '../../lib/llm';
 import { api } from '../../lib/api';
 import { promptDescription } from '../../lib/attachments';
+import { coerceReqMarkdown, coerceDocMarkdown } from '../../lib/subreq';
 
 export type ModelProcessState = {
   entries: { id: string; at: string; prompt: string; body: string; status: 'running' | 'done' | 'error' }[];
@@ -156,7 +157,8 @@ export function useIssueChat(params: {
 
     const patchProcess = (body: string, status?: 'running' | 'done' | 'error') => {
       setModelProcess((prev) => ({
-        ...prev,
+        // Keep open while streaming; auto-collapse when finished so chat stays usable.
+        expanded: status === 'running' ? true : status ? false : prev.expanded,
         entries: prev.entries.map((e) =>
           e.id === processId ? { ...e, body, ...(status ? { status } : {}) } : e
         ),
@@ -279,8 +281,8 @@ export function useIssueChat(params: {
             };
             setPendingLlm(null);
             onUpdateIssue(saved);
-            if (reqDoc?.rawMarkdown) setReqMarkdown?.(reqDoc.rawMarkdown);
-            if (spec?.rawMarkdown && !syncReqDoc && !split) setSpecMarkdown(spec.rawMarkdown);
+            if (reqDoc?.rawMarkdown) setReqMarkdown?.(coerceReqMarkdown(reqDoc.rawMarkdown));
+            if (spec?.rawMarkdown && !syncReqDoc && !split) setSpecMarkdown(coerceDocMarkdown(spec.rawMarkdown));
             if (split) setSelectedScope('all');
             return;
           }
@@ -335,7 +337,18 @@ export function useIssueChat(params: {
         setChatError(t.requestCancelled);
         patchProcess(t.requestCancelled, 'error');
       } else {
-        const message = err?.message || t.llmError;
+        let message = err?.message || t.llmError;
+        if (/accept the requirement/i.test(message)) {
+          message =
+            lang === 'zh'
+              ? '请先点击「确认需求」，再生成开发设计。'
+              : 'Accept the requirement document before generating design.';
+        } else if (/associate at least one repository/i.test(message)) {
+          message =
+            lang === 'zh'
+              ? '请先关联至少一个代码仓库，再生成开发设计。'
+              : 'Associate at least one repository before generating design.';
+        }
         setChatError(message);
         patchProcess(`${t.llmRetryGiveUp}\n${message}`, 'error');
         const pending: PendingLLMSession = {
@@ -349,7 +362,10 @@ export function useIssueChat(params: {
           attempts: LLM_AUTO_ATTEMPTS,
           updatedAt: new Date().toISOString(),
         };
-        persistPending(pending, mergeChat(tempIssue, updatedMessages));
+        // Gate errors are not worth auto-retry / resume as LLM failures.
+        if (!/确认需求|Accept the requirement|关联至少一个|Associate at least one/i.test(message)) {
+          persistPending(pending, mergeChat(tempIssue, updatedMessages));
+        }
       }
     } finally {
       setIsSending(false);

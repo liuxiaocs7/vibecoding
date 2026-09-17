@@ -135,7 +135,7 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
                 msg.sender === 'user'
                   ? 'bg-indigo-600/20 border border-indigo-500/40 text-indigo-900 dark:text-indigo-100 rounded-tr-none'
                   : msg.sender === 'ai'
-                  ? `${themeConfig.cardBg} border ${themeConfig.cardBorder} ${themeConfig.textPrimary} rounded-tl-none font-sans select-text`
+                  ? `${themeConfig.cardBg} border ${themeConfig.subtleBorder} ${themeConfig.textPrimary} rounded-tl-none font-sans select-text`
                   : `${themeConfig.inputBg} border ${themeConfig.inputBorder} ${themeConfig.textMuted} font-mono`
               }`}
             >
@@ -175,9 +175,56 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Ephemeral model process (not persisted) */}
+      {/* Ephemeral model process: compact bar + upward overlay (does not crush chat scroll). */}
       {modelProcess.entries.length > 0 && (
-        <div className={`border-t shrink-0 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+        <div className={`relative shrink-0 border-t z-20 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+          {modelProcess.expanded && (
+            <div
+              className={`absolute bottom-full left-0 right-0 max-h-[42vh] overflow-y-auto border-t shadow-[0_-8px_24px_rgba(0,0,0,0.12)] ${themeConfig.subtleBorder} ${themeConfig.modalBg}`}
+            >
+              <div className="px-4 py-3 space-y-2">
+                {[...modelProcess.entries].reverse().map((entry) => (
+                  <div
+                    key={entry.id}
+                    className={`rounded-lg border p-2.5 text-[11px] ${themeConfig.cardBg} ${themeConfig.subtleBorder}`}
+                  >
+                    <div className={`flex items-center justify-between gap-2 mb-1.5 ${themeConfig.textMuted}`}>
+                      <span className="font-mono shrink-0">{entry.at}</span>
+                      <span
+                        className={
+                          entry.status === 'running'
+                            ? 'text-indigo-500'
+                            : entry.status === 'error'
+                            ? 'text-rose-500'
+                            : 'text-emerald-500'
+                        }
+                      >
+                        {entry.status === 'running'
+                          ? t.processStreaming
+                          : entry.status === 'error'
+                          ? t.processError
+                          : t.processDone}
+                      </span>
+                    </div>
+                    <div className={`mb-1 truncate ${themeConfig.textSecondary}`} title={entry.prompt}>
+                      → {entry.prompt}
+                    </div>
+                    <pre
+                      ref={(el) => {
+                        if (el && entry.status === 'running') {
+                          el.scrollTop = el.scrollHeight;
+                        }
+                      }}
+                      className="whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed max-h-40 overflow-y-auto select-text opacity-90"
+                    >
+                      {entry.body}
+                      {entry.status === 'running' ? '▌' : ''}
+                    </pre>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <button
             type="button"
             onClick={() =>
@@ -191,62 +238,30 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
                 {lang === 'zh' ? '模型过程' : 'Model process'}
                 <span className={`ml-1.5 font-normal ${themeConfig.textMuted}`}>
                   ({modelProcess.entries.length}
-                  {lang === 'zh' ? '，仅本会话展示、不落库' : ', session only'})
+                  {lang === 'zh' ? '，仅本会话' : ', session only'})
                 </span>
               </span>
               {modelProcess.entries.some((e) => e.status === 'running') && (
                 <Loader2 className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />
               )}
             </span>
-            {modelProcess.expanded ? (
-              <ChevronUp className="w-3.5 h-3.5 shrink-0" title="收起" />
-            ) : (
-              <ChevronDown className="w-3.5 h-3.5 shrink-0" title="展开" />
-            )}
+            <span className="flex items-center gap-1 shrink-0 text-[10px] font-medium">
+              <span className={themeConfig.textMuted}>
+                {modelProcess.expanded
+                  ? lang === 'zh'
+                    ? '收起'
+                    : 'Hide'
+                  : lang === 'zh'
+                    ? '查看'
+                    : 'Show'}
+              </span>
+              {modelProcess.expanded ? (
+                <ChevronDown className="w-3.5 h-3.5" />
+              ) : (
+                <ChevronUp className="w-3.5 h-3.5" />
+              )}
+            </span>
           </button>
-          {modelProcess.expanded && (
-            <div className="px-4 pb-3 max-h-56 overflow-y-auto space-y-2">
-              {[...modelProcess.entries].reverse().map((entry) => (
-                <div
-                  key={entry.id}
-                  className={`rounded-lg border p-2.5 text-[11px] ${themeConfig.cardBg} ${themeConfig.cardBorder}`}
-                >
-                  <div className={`flex items-center justify-between gap-2 mb-1.5 ${themeConfig.textMuted}`}>
-                    <span className="font-mono shrink-0">{entry.at}</span>
-                    <span
-                      className={
-                        entry.status === 'running'
-                          ? 'text-indigo-500'
-                          : entry.status === 'error'
-                          ? 'text-rose-500'
-                          : 'text-emerald-500'
-                      }
-                    >
-                      {entry.status === 'running'
-                        ? t.processStreaming
-                        : entry.status === 'error'
-                        ? t.processError
-                        : t.processDone}
-                    </span>
-                  </div>
-                  <div className={`mb-1 truncate ${themeConfig.textSecondary}`} title={entry.prompt}>
-                    → {entry.prompt}
-                  </div>
-                  <pre
-                    ref={(el) => {
-                      if (el && entry.status === 'running') {
-                        el.scrollTop = el.scrollHeight;
-                      }
-                    }}
-                    className="whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed max-h-36 overflow-y-auto select-text opacity-90"
-                  >
-                    {entry.body}
-                    {entry.status === 'running' ? '▌' : ''}
-                  </pre>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       )}
 

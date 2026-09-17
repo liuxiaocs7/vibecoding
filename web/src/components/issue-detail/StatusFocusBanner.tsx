@@ -8,6 +8,7 @@ import {
   designStale,
   hasUnverifiedModifies,
   legacySpecOnly,
+  backlogBlockReason,
 } from '../../lib/subreq';
 import {
   MessageSquare,
@@ -60,7 +61,10 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
 
   const moveToBacklog = async () => {
     if (!specReadyForDev(issue)) {
-      window.alert(t.backlogNeedsSpec);
+      window.alert(
+        backlogBlockReason(issue, lang) ||
+          (lang === 'zh' ? t.backlogNeedsSpec : t.backlogNeedsSpec)
+      );
       return;
     }
     if (associatedRepos.length === 0) {
@@ -182,7 +186,8 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
                 {t.extractSpecBtn}
               </button>
             )}
-            {specReadyForDev(issue) && associatedRepos.length > 0 && (
+            {(specReadyForDev(issue) || (hasReqDoc(issue) && !!issue.devSpec?.rawMarkdown)) &&
+              associatedRepos.length > 0 && (
               <button
                 onClick={moveToBacklog}
                 className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-900 dark:text-amber-200 font-semibold text-[11px] transition-all"

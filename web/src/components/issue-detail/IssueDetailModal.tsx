@@ -4,7 +4,7 @@ import { Issue, GitRepo, ModelConfig, BranchPrefixConfig, SubRequirement, DiffCo
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { api } from '../../lib/api';
-import { hasSubRequirements, specMarkdownForExport, reqMarkdownForExport, visibleSpec } from '../../lib/subreq';
+import { hasSubRequirements, specMarkdownForExport, reqMarkdownForExport, visibleSpec, coerceReqMarkdown, coerceDocMarkdown, coerceDevSpec, backlogBlockReason, hasUnverifiedModifies } from '../../lib/subreq';
 import { formatReviewComments } from '../../lib/reviewComments';
 import { saveTextFile } from '../../lib/savefile';
 import { useIssueChat } from './useIssueChat';
@@ -138,15 +138,101 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   useEffect(() => {
     const spec = visibleSpec(issue, selectedScope);
     if (spec?.rawMarkdown) {
-      setSpecMarkdown(spec.rawMarkdown);
+      setSpecMarkdown(coerceDocMarkdown(spec.rawMarkdown));
     }
   }, [issue.devSpec, issue.subRequirements, selectedScope]);
 
   useEffect(() => {
     if (issue.reqDoc?.rawMarkdown) {
-      setReqMarkdown(issue.reqDoc.rawMarkdown);
+      setReqMarkdown(coerceReqMarkdown(issue.reqDoc.rawMarkdown));
     }
   }, [issue.reqDoc?.rawMarkdown]);
+
+  // Heal ReqDocs / DevSpecs that accidentally stored the model JSON envelope as markdown.
+  useEffect(() => {
+    const rawReq = issue.reqDoc?.rawMarkdown || '';
+    const fixedReq = coerceReqMarkdown(rawReq);
+    const healReq = !!fixedReq && fixedReq !== rawReq.trim();
+
+    let next = issue;
+    let changed = false;
+    if (healReq && issue.reqDoc) {
+      next = {
+        ...next,
+        reqDoc: { ...issue.reqDoc, rawMarkdown: fixedReq },
+      };
+      changed = true;
+    }
+
+    if (hasSubRequirements(issue)) {
+      let subsChanged = false;
+      const subs = (issue.subRequirements || []).map((sub) => {
+        const healed = coerceDevSpec(sub.devSpec);
+        if (!healed || !sub.devSpec) return sub;
+        if (
+          healed.rawMarkdown === sub.devSpec.rawMarkdown &&
+          (healed.fileChanges?.length || 0) === (sub.devSpec.fileChanges?.length || 0) &&
+          healed.title === sub.devSpec.title
+        ) {
+          return sub;
+        }
+        subsChanged = true;
+        return { ...sub, devSpec: healed };
+      });
+      if (subsChanged) {
+        next = { ...next, subRequirements: subs };
+        changed = true;
+      }
+    } else {
+      const healed = coerceDevSpec(issue.devSpec);
+      if (
+        healed &&
+        issue.devSpec &&
+        (healed.rawMarkdown !== issue.devSpec.rawMarkdown ||
+          (healed.fileChanges?.length || 0) !== (issue.devSpec.fileChanges?.length || 0) ||
+          healed.title !== issue.devSpec.title)
+      ) {
+        next = { ...next, devSpec: healed };
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      onUpdateIssue({ ...next, updatedAt: new Date().toISOString() });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- heal once per bad payload
+  }, [issue.id, issue.reqDoc?.rawMarkdown, issue.devSpec?.rawMarkdown, issue.subRequirements]);
+
+  const handleAcceptDesignToBacklog = async () => {
+    const reason = backlogBlockReason(issue, lang);
+    if (reason) {
+      setChatError(reason);
+      window.alert(reason);
+      return;
+    }
+    if (!(issue.associatedRepoIds || []).length) {
+      const msg = t.backlogNeedsRepo;
+      setChatError(msg);
+      window.alert(msg);
+      return;
+    }
+    if (hasUnverifiedModifies(issue)) {
+      const ok = window.confirm(
+        lang === 'zh'
+          ? '开发设计中仍有未核实的修改点。确认仍要进入待执行吗？'
+          : 'Some modify/delete file changes are unverified. Move to backlog anyway?'
+      );
+      if (!ok) return;
+    }
+    setChatError('');
+    onUpdateIssue({
+      ...issue,
+      status: 'backlog',
+      docPhase: 'design',
+      updatedAt: new Date().toISOString(),
+    });
+    setActiveTab('console');
+  };
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -415,11 +501,13 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           issue={issue}
           lang={lang}
           themeStyle={themeStyle}
+          branchPrefixConfig={branchPrefixConfig}
           onClose={handleHeaderClose}
           onMinimize={onMinimize}
           analyzing={isSending}
           onStartAutoDev={onStartAutoDev}
           onDeleteIssue={onDeleteIssue}
+          onUpdateIssue={onUpdateIssue}
           setActiveTab={setActiveTab}
         />
 
@@ -508,6 +596,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               handleSendMessage={handleSendMessage}
               handleExportDevSpec={handleExportDevSpec}
               handleExportReqDoc={handleExportReqDoc}
+              handleAcceptDesignToBacklog={handleAcceptDesignToBacklog}
               onUpdateIssue={onUpdateIssue}
               pendingLlm={pendingLlm}
               onRetrySession={handleRetrySession}

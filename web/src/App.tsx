@@ -4,7 +4,7 @@ import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './li
 import { Language, ThemeStyle, getTranslation } from './lib/i18n';
 import { THEME_CONFIGS } from './lib/theme';
 import { api, subscribeJobEvents } from './lib/api';
-import { hasSubRequirements, specReadyForDev, hasUnverifiedModifies } from './lib/subreq';
+import { hasSubRequirements, specReadyForDev, hasUnverifiedModifies, backlogBlockReason } from './lib/subreq';
 import { KanbanBoard } from './components/KanbanBoard';
 import { IssueDetailModal, ISSUE_SESSION_DOCK_ID } from './components/IssueDetailModal';
 import { ProjectModal } from './components/ProjectModal';
@@ -368,7 +368,11 @@ export default function App() {
     if (!target) return;
     if (newStatus === 'backlog') {
       if (!specReadyForDev(target)) {
-        showToast('error', hasSubRequirements(target) ? t.backlogNeedsSubSpecs : t.backlogNeedsSpec);
+        showToast(
+          'error',
+          backlogBlockReason(target, language) ||
+            (hasSubRequirements(target) ? t.backlogNeedsSubSpecs : t.backlogNeedsSpec)
+        );
         return;
       }
       if (!target.associatedRepoIds?.length) {
@@ -808,6 +812,7 @@ export default function App() {
           onClose={() => setIsCreateIssueModalOpen(false)}
           projectId={activeProject.id}
           gitRepos={activeProject.gitRepos}
+          branchPrefixConfig={activeProject.branchPrefixConfig}
           onCreate={handleCreateIssue}
           lang={language}
           themeStyle={themeStyle}

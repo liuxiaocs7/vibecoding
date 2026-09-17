@@ -7,7 +7,7 @@ import { SubRequirementBar } from '../SubRequirementBar';
 import { FileText, Sparkles, Loader2, Download, Edit3, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { LLMRecoveryBar } from './LLMRecoveryBar';
 import { SendMessageOpts } from './useIssueChat';
-import { requirementAccepted, hasReqDoc, briefToReqMarkdown } from '../../lib/subreq';
+import { requirementAccepted, hasReqDoc, briefToReqMarkdown, coerceReqMarkdown, coerceDocMarkdown, legacySpecOnly, specReadyForDev, backlogBlockReason } from '../../lib/subreq';
 import { api } from '../../lib/api';
 
 interface IssueSpecTabProps {
@@ -33,6 +33,7 @@ interface IssueSpecTabProps {
   handleSendMessage: (customPrompt?: string, opts?: SendMessageOpts) => Promise<void>;
   handleExportDevSpec: () => Promise<void>;
   handleExportReqDoc?: () => Promise<void>;
+  handleAcceptDesignToBacklog?: () => Promise<void> | void;
   onUpdateIssue: (updatedIssue: Issue) => void;
   pendingLlm?: PendingLLMSession | null;
   onRetrySession?: () => void;
@@ -62,6 +63,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   handleSendMessage,
   handleExportDevSpec,
   handleExportReqDoc,
+  handleAcceptDesignToBacklog,
   onUpdateIssue,
   pendingLlm,
   onRetrySession,
@@ -105,7 +107,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   };
 
   return (
-    <div className="flex-1 p-6 overflow-y-auto space-y-4">
+    <div className="flex flex-col flex-1 min-h-0 p-6 overflow-y-auto gap-4 text-[11px]">
       {splitIssue && (
         <SubRequirementBar
           issue={issue}
@@ -118,31 +120,39 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
           themeStyle={themeStyle}
         />
       )}
-      <div className="flex items-center gap-2 text-[11px]">
+      <div
+        className={`inline-flex flex-row flex-wrap items-center gap-1 p-1 rounded-xl border w-fit max-w-full ${themeConfig.subtleBorder} ${themeConfig.cardBg}`}
+        role="tablist"
+        aria-label={lang === 'zh' ? '文档切换' : 'Document switch'}
+      >
         <button
           type="button"
+          role="tab"
+          aria-selected={docPane === 'req'}
           onClick={() => setDocPane('req')}
-          className={`px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+          className={`inline-flex flex-row items-center justify-center gap-1.5 whitespace-nowrap shrink-0 px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
             docPane === 'req'
               ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-800 dark:text-cyan-200'
-              : `${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`
+              : `border-transparent ${themeConfig.btnSecondaryText} hover:bg-black/5 dark:hover:bg-white/5`
           }`}
         >
-          {t.docTabReq}
+          <span>{t.docTabReq}</span>
           {issue.reqDoc?.acceptedAt && requirementAccepted(issue) && (
-            <CheckCircle2 className="inline w-3 h-3 ml-1 text-emerald-500" />
+            <CheckCircle2 className="w-3 h-3 text-emerald-500 shrink-0" />
           )}
         </button>
         <button
           type="button"
+          role="tab"
+          aria-selected={docPane === 'design'}
           onClick={() => setDocPane('design')}
-          className={`px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+          className={`inline-flex flex-row items-center justify-center gap-1.5 whitespace-nowrap shrink-0 px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
             docPane === 'design'
               ? 'border-amber-500/50 bg-amber-500/15 text-amber-900 dark:text-amber-200'
-              : `${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`
+              : `border-transparent ${themeConfig.btnSecondaryText} hover:bg-black/5 dark:hover:bg-white/5`
           }`}
         >
-          {t.docTabDesign}
+          <span>{t.docTabDesign}</span>
         </button>
       </div>
       <p className={`text-[11px] ${themeConfig.textMuted}`}>{t.sourceScanNotice}</p>
@@ -284,7 +294,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                 <p className={`text-[10px] uppercase tracking-wider mb-2 ${themeConfig.textMuted}`}>
                   Markdown
                 </p>
-                <MarkdownView text={issue.reqDoc.rawMarkdown} />
+                <MarkdownView text={coerceReqMarkdown(issue.reqDoc.rawMarkdown)} />
               </div>
             )}
           </div>
@@ -296,28 +306,57 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
             {lang === 'zh' ? '暂未生成开发设计 (Dev Spec)' : 'No Dev Spec yet'}
           </h3>
           <p className={`text-xs max-w-md mx-auto mt-1 mb-4 ${themeConfig.textMuted}`}>
-            {lang === 'zh'
-              ? '确认需求后，点击「基于源码生成设计」。会读取关联仓库摘要发给模型。'
-              : 'After accepting the requirement, generate design from local source excerpts.'}
+            {!requirementAccepted(issue) && hasReqDoc(issue)
+              ? lang === 'zh'
+                ? '请先在上方点击「确认需求」，再基于源码生成开发设计。'
+                : 'Accept the requirement above, then generate design from source excerpts.'
+              : lang === 'zh'
+                ? '确认需求后，点击「基于源码生成设计」。会读取关联仓库摘要发给模型。'
+                : 'After accepting the requirement, generate design from local source excerpts.'}
           </p>
-          <button
-            onClick={() => {
-              setActiveTab('chat');
-              handleSendMessage(
-                lang === 'zh'
-                  ? '请基于关联仓库源码摘要，撰写完整开发设计。'
-                  : 'Write a complete Dev Spec from local source excerpts.',
-                {
-                  forceSpecSync: true,
-                  scope: splitIssue && selectedScope !== 'all' ? selectedScope : undefined,
+          {!requirementAccepted(issue) && hasReqDoc(issue) ? (
+            <button
+              onClick={async () => {
+                try {
+                  const saved = await api.acceptRequirement(issue.id);
+                  onUpdateIssue(saved);
+                } catch (e: any) {
+                  window.alert(e?.message || (lang === 'zh' ? '确认需求失败' : 'Accept failed'));
                 }
-              );
-            }}
-            className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
-          >
-            <Sparkles className="w-4 h-4" />
-            {t.extractSpecBtn}
-          </button>
+              }}
+              className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {t.acceptReqBtn}
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (!requirementAccepted(issue) && !legacySpecOnly(issue)) {
+                  window.alert(
+                    lang === 'zh'
+                      ? '请先确认需求文档，再生成开发设计。'
+                      : 'Accept the requirement document before generating design.'
+                  );
+                  return;
+                }
+                setActiveTab('chat');
+                handleSendMessage(
+                  lang === 'zh'
+                    ? '请基于关联仓库源码摘要，撰写完整开发设计。'
+                    : 'Write a complete Dev Spec from local source excerpts.',
+                  {
+                    forceSpecSync: true,
+                    scope: splitIssue && selectedScope !== 'all' ? selectedScope : undefined,
+                  }
+                );
+              }}
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              {t.extractSpecBtn}
+            </button>
+          )}
         </div>
       ) : (
         <div className="space-y-4 h-full flex flex-col min-h-0">
@@ -340,7 +379,22 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                   {currentSpec?.updatedAt ? new Date(currentSpec.updatedAt).toLocaleString() : '—'}
                 </p>
               </div>
-              <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+                {issue.status === 'requirements' && handleAcceptDesignToBacklog && (
+                  <button
+                    type="button"
+                    onClick={() => void handleAcceptDesignToBacklog()}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+                    title={
+                      specReadyForDev(issue)
+                        ? t.acceptSpecBacklog
+                        : backlogBlockReason(issue, lang)
+                    }
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    {t.acceptSpecBacklog}
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={handleExportDevSpec}
@@ -465,7 +519,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
               </div>
             </div>
           ) : (
-            <MarkdownView text={currentSpec?.rawMarkdown || ''} />
+            <MarkdownView text={coerceDocMarkdown(currentSpec?.rawMarkdown || '')} />
           )}
         </div>
       )}

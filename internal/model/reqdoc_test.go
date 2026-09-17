@@ -62,12 +62,12 @@ func TestReqDocGates(t *testing.T) {
 		t.Fatal("fresh design should not be stale")
 	}
 	if !iss.SpecReadyForDev() {
-		t.Fatal("accepted + fresh design + fileChanges should be ready")
+		t.Fatal("accepted + fresh design should be ready")
 	}
 
 	iss.DevSpec.FileChanges = nil
-	if iss.SpecReadyForDev() {
-		t.Fatal("empty fileChanges should block new-flow issues")
+	if !iss.SpecReadyForDev() {
+		t.Fatal("empty fileChanges should still allow backlog when markdown design exists")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestHasUnverifiedModifies(t *testing.T) {
 	}
 }
 
-func TestSplitSpecReadyRequiresEachSubFileChanges(t *testing.T) {
+func TestSplitSpecReadyWithMarkdownDesigns(t *testing.T) {
 	iss := &Issue{
 		ReqDoc: &ReqDoc{
 			RawMarkdown: "# req",
@@ -164,11 +164,11 @@ func TestSplitSpecReadyRequiresEachSubFileChanges(t *testing.T) {
 			},
 		},
 	}
-	if iss.SpecReadyForDev() {
-		t.Fatal("sub without fileChanges should block")
-	}
-	iss.SubRequirements[1].DevSpec.FileChanges = []SpecFileChange{{FilePath: "b.go", Action: "create", Verified: true}}
 	if !iss.SpecReadyForDev() {
-		t.Fatal("all subs with fileChanges should be ready")
+		t.Fatal("accepted req + all sub markdown designs should be ready without fileChanges")
+	}
+	iss.SubRequirements[1].DevSpec.RawMarkdown = ""
+	if iss.SpecReadyForDev() {
+		t.Fatal("missing sub markdown should block")
 	}
 }

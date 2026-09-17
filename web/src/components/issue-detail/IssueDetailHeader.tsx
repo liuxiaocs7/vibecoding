@@ -1,19 +1,23 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Issue } from '../../types';
+import { Issue, IssueKind, BranchPrefixConfig } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { specReadyForDev } from '../../lib/subreq';
-import { X, Play, Trash2, Minus } from 'lucide-react';
+import { branchNameForIssue, normalizeIssueKind } from '../../lib/issueKind';
+import { ThemedSelect } from '../ThemedSelect';
+import { X, Play, Trash2, Minus, GitBranch } from 'lucide-react';
 
 interface IssueDetailHeaderProps {
   issue: Issue;
   lang: Language;
   themeStyle: ThemeStyle;
+  branchPrefixConfig?: BranchPrefixConfig;
   onClose: () => void;
   onMinimize?: () => void;
   analyzing?: boolean;
   onStartAutoDev: (issueId: string, subRequirementId?: string) => void;
   onDeleteIssue?: (issueId: string) => void;
+  onUpdateIssue?: (updatedIssue: Issue) => void;
   setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
 }
 
@@ -21,17 +25,23 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
   issue,
   lang,
   themeStyle,
+  branchPrefixConfig,
   onClose,
   onMinimize,
   analyzing,
   onStartAutoDev,
   onDeleteIssue,
+  onUpdateIssue,
   setActiveTab,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
+  const isLight = themeConfig.isLight;
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteWrapRef = useRef<HTMLDivElement>(null);
+  const kind = normalizeIssueKind(issue.kind);
+  const canEditKind = issue.status === 'requirements' || issue.status === 'backlog';
+  const branchPreview = issue.prInfo?.branchName || branchNameForIssue(branchPrefixConfig, issue);
 
   useEffect(() => {
     setConfirmingDelete(false);
@@ -47,9 +57,18 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
   }, [confirmingDelete]);
 
+  const setKind = (next: IssueKind) => {
+    if (!onUpdateIssue || next === kind) return;
+    onUpdateIssue({
+      ...issue,
+      kind: next,
+      updatedAt: new Date().toISOString(),
+    });
+  };
+
   return (
     <div className={`p-5 border-b flex items-center justify-between gap-4 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
-      <div className="flex items-center gap-3 overflow-hidden">
+      <div className="flex items-center gap-3 overflow-hidden min-w-0">
         <span
           className={`px-2.5 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider shrink-0 border ${
             issue.status === 'requirements'
@@ -76,8 +95,39 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
 
         <div className="overflow-hidden min-w-0">
           <h2 className={`text-lg font-bold truncate ${themeConfig.textPrimary}`}>{issue.title}</h2>
-          <div className={`flex items-center gap-2 text-xs mt-0.5 ${themeConfig.textSecondary}`}>
+          <div className={`flex flex-wrap items-center gap-x-3 gap-y-1 text-xs mt-0.5 ${themeConfig.textSecondary}`}>
             <span className="shrink-0">Issue #{issue.id}</span>
+            <label className="flex items-center gap-1.5 min-w-0">
+              <span className={`shrink-0 ${themeConfig.textMuted}`}>{t.createIssueKind}</span>
+              {canEditKind && onUpdateIssue ? (
+                <ThemedSelect
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as IssueKind)}
+                  isLight={isLight}
+                  chevronClassName={themeConfig.textSecondary}
+                  className={`px-2 py-0.5 border rounded-md text-[11px] font-semibold max-w-[140px] ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                >
+                  <option value="feature">{t.issueKindFeature}</option>
+                  <option value="bugfix">{t.issueKindBugfix}</option>
+                  <option value="hotfix">{t.issueKindHotfix}</option>
+                </ThemedSelect>
+              ) : (
+                <span className="font-semibold">
+                  {kind === 'bugfix'
+                    ? t.issueKindBugfix
+                    : kind === 'hotfix'
+                      ? t.issueKindHotfix
+                      : t.issueKindFeature}
+                </span>
+              )}
+            </label>
+            <span
+              className="inline-flex items-center gap-1 font-mono text-[10px] min-w-0 max-w-full"
+              title={branchPreview}
+            >
+              <GitBranch className="w-3 h-3 text-indigo-500 shrink-0" />
+              <span className="truncate">{branchPreview}</span>
+            </span>
           </div>
         </div>
       </div>
