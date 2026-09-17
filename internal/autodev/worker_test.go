@@ -507,3 +507,43 @@ func TestRunSetupFailureKeepsWorktree(t *testing.T) {
 		t.Fatalf("executor should not run after setup failure, calls=%d", fake.calls.Load())
 	}
 }
+
+func TestConfiguredTestCommandFailure(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	proj, _ := store.GetProject("proj-1")
+	proj.GitRepos[0].TestCommand = "echo fail-out; exit 1"
+	_ = store.UpsertProject(*proj)
+	fake := &fakeExecutor{
+		name: "fake",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hi\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{Changes: []model.SpecFileChange{{
+				FilePath: "hello.txt", RepoName: req.RepoName, Action: "create", Summary: "hi",
+			}}}, nil
+		},
+	}
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	r := &Runner{
+		Store: store, Hub: NewHub(), WorktreeRoot: wtRoot,
+		NewExecutor: func(cfg model.ExecutorConfig) (executor.Executor, error) { return fake, nil },
+	}
+	err := r.run(context.Background(), job.ID)
+	if err == nil {
+		t.Fatal("expected test failure")
+	}
+	logs, _ := store.ListJobLogs(job.ID)
+	var sawConfigured bool
+	for _, l := range logs {
+		if l.Phase == "testing" && strings.Contains(l.Message, "configured:") {
+			sawConfigured = true
+			break
+		}
+	}
+	if !sawConfigured {
+		t.Fatalf("expected configured test log, got %#v", logs)
+	}
+}

@@ -61,7 +61,7 @@ func (s *Server) completeLLMJSON(ctx context.Context, cfg model.ModelConfig, sys
 	return text, err
 }
 
-func (s *Server) streamOrCompleteJSON(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, system string, msgs []llm.ChatMessage, finish func(text string) (any, error)) {
+func (s *Server) streamOrCompleteJSON(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, system string, msgs []llm.ChatMessage, preStatuses []string, finish func(text string) (any, error)) {
 	ctx, cancel := context.WithTimeout(r.Context(), llm.RequestTimeout)
 	defer cancel()
 
@@ -70,6 +70,12 @@ func (s *Server) streamOrCompleteJSON(w http.ResponseWriter, r *http.Request, cf
 		if err != nil {
 			writeErr(w, 500, err.Error())
 			return
+		}
+		for _, st := range preStatuses {
+			if strings.TrimSpace(st) == "" {
+				continue
+			}
+			_ = sse.event(map[string]any{"type": "status", "message": st})
 		}
 		_ = sse.event(map[string]any{"type": "status", "message": "calling_model"})
 		var lastFlush time.Time
@@ -258,7 +264,7 @@ Split into ordered requirement slices and return JSON.`,
 	msgs := recentChatMsgs(body.Messages)
 	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
 
-	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
+	s.streamOrCompleteJSON(w, r, cfg, system, msgs, nil, func(text string) (any, error) {
 		split, err := llm.ParseReqSplitJSON(text, issue.Title)
 		if err != nil {
 			return nil, err

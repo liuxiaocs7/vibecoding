@@ -500,6 +500,88 @@ ORDER BY created_at DESC LIMIT 1
 	return s.GetJob(id)
 }
 
+// ListJobsByStatus returns jobs whose status is in statuses (any order).
+func (s *Store) ListJobsByStatus(statuses ...model.AutoDevJobStatus) ([]model.AutoDevJob, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, st := range statuses {
+		placeholders[i] = "?"
+		args[i] = string(st)
+	}
+	q := fmt.Sprintf(`
+SELECT id FROM autodev_jobs
+WHERE status IN (%s)
+ORDER BY created_at ASC
+`, strings.Join(placeholders, ","))
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return nil, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	// Collect IDs first: MaxOpenConns=1, so nested GetJob while rows are open deadlocks.
+	out := make([]model.AutoDevJob, 0, len(ids))
+	for _, id := range ids {
+		job, err := s.GetJob(id)
+		if err != nil {
+			return nil, err
+		}
+		if job != nil {
+			out = append(out, *job)
+		}
+	}
+	return out, nil
+}
+
+// FailOrphanJobs marks queued/running jobs as failed after a process restart
+// and moves their in_progress issues back to backlog. Worktrees are left intact.
+func (s *Store) FailOrphanJobs() (int, error) {
+	jobs, err := s.ListJobsByStatus(model.JobQueued, model.JobRunning)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for i := range jobs {
+		job := jobs[i]
+		job.Status = model.JobFailed
+		job.Phase = "failed"
+		job.Error = "interrupted: process restarted"
+		if err := s.UpdateJob(&job); err != nil {
+			return n, err
+		}
+		issue, err := s.GetIssue(job.IssueID)
+		if err != nil {
+			return n, err
+		}
+		if issue != nil && issue.Status == model.StatusInProgress {
+			issue.Status = model.StatusBacklog
+			issue.UpdatedAt = model.NowISO()
+			if err := s.UpsertIssue(*issue); err != nil {
+				return n, err
+			}
+		}
+		n++
+	}
+	return n, nil
+}
+
 func (s *Store) AppendJobLog(jobID, issueID string, log model.AutoDevLog) error {
 	if log.ID == "" {
 		log.ID = "log-" + uuid.NewString()[:10]

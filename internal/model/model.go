@@ -59,6 +59,8 @@ type GitRepo struct {
 	FilesCount    int    `json:"filesCount,omitempty"`
 	URL           string `json:"url,omitempty"`
 	SetupCommand  string `json:"setupCommand,omitempty"`
+	TestCommand   string `json:"testCommand,omitempty"`
+	LintCommand   string `json:"lintCommand,omitempty"`
 }
 
 type ModelConfig struct {

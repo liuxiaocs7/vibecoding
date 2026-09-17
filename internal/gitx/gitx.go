@@ -272,19 +272,84 @@ func ApplyUnifiedDiff(dir, diff string) error {
 	if strings.TrimSpace(diff) == "" {
 		return fmt.Errorf("empty diff")
 	}
-	cmd := exec.Command("git", "apply", "--whitespace=nowarn", "-")
-	cmd.Dir = dir
-	cmd.Stdin = strings.NewReader(diff)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			msg = err.Error()
+	// git apply requires a trailing newline; do not TrimSpace the whole patch.
+	if !strings.HasSuffix(diff, "\n") {
+		diff += "\n"
+	}
+	if err := rejectUnsafeDiffPaths(diff); err != nil {
+		return err
+	}
+	try := func(extraArgs ...string) error {
+		args := append([]string{"apply", "--whitespace=nowarn"}, extraArgs...)
+		args = append(args, "-")
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader(diff)
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			msg := strings.TrimSpace(stderr.String())
+			if msg == "" {
+				msg = err.Error()
+			}
+			return fmt.Errorf("git apply: %s", msg)
 		}
-		return fmt.Errorf("git apply: %s", msg)
+		return nil
+	}
+	if err := try(); err != nil {
+		if err2 := try("--3way"); err2 != nil {
+			return fmt.Errorf("%v; retry --3way: %w", err, err2)
+		}
 	}
 	return nil
+}
+
+func rejectUnsafeDiffPaths(diff string) error {
+	for _, line := range strings.Split(diff, "\n") {
+		var path string
+		switch {
+		case strings.HasPrefix(line, "diff --git "):
+			fields := strings.Fields(line)
+			for _, f := range fields[2:] {
+				path = strings.TrimPrefix(strings.TrimPrefix(f, "a/"), "b/")
+				if badDiffPath(path) {
+					return fmt.Errorf("unsafe path in diff: %s", path)
+				}
+			}
+			continue
+		case strings.HasPrefix(line, "+++ b/"):
+			path = strings.TrimPrefix(line, "+++ b/")
+		case strings.HasPrefix(line, "--- a/"):
+			path = strings.TrimPrefix(line, "--- a/")
+		case strings.HasPrefix(line, "+++ ") && !strings.HasPrefix(line, "+++ /dev/null"):
+			path = strings.TrimPrefix(line, "+++ ")
+			path = strings.TrimPrefix(path, "b/")
+		case strings.HasPrefix(line, "--- ") && !strings.HasPrefix(line, "--- /dev/null"):
+			path = strings.TrimPrefix(line, "--- ")
+			path = strings.TrimPrefix(path, "a/")
+		default:
+			continue
+		}
+		if path == "/dev/null" || path == "" {
+			continue
+		}
+		if badDiffPath(path) {
+			return fmt.Errorf("unsafe path in diff: %s", path)
+		}
+	}
+	return nil
+}
+
+func badDiffPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" || path == "/dev/null" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	if filepath.IsAbs(clean) || strings.HasPrefix(clean, "..") {
+		return true
+	}
+	return false
 }
 
 func CommitAll(dir, message string) error {
@@ -298,7 +363,8 @@ func CommitAll(dir, message string) error {
 	if !dirty {
 		return fmt.Errorf("nothing to commit")
 	}
-	cmd := exec.Command("git", "-c", "user.name=VibeBot", "-c", "user.email=vibebot@local", "commit", "-m", message)
+	// Use the machine's git identity (local or global). Do not forge VibeBot.
+	cmd := exec.Command("git", "commit", "-m", message)
 	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -310,6 +376,20 @@ func CommitAll(dir, message string) error {
 		return fmt.Errorf("git commit: %s", msg)
 	}
 	return nil
+}
+
+// ConfigGet returns a local-or-global git config value (empty if unset).
+func ConfigGet(dir, key string) string {
+	out, err := run(dir, "config", "--get", key)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// UserName returns git user.name for display (empty if unset).
+func UserName(dir string) string {
+	return ConfigGet(dir, "user.name")
 }
 
 func DiffStats(dir, baseBranch string) (model.DiffStats, error) {

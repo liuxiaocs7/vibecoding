@@ -114,6 +114,7 @@ curl -s http://127.0.0.1:8090/api/health
 | `--log-level` | `info` | Both | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | Both | `text` / `json` |
 | `--log-output` | `stdout` | Both | `stdout` / `stderr` / `discard` / path to file |
+| `--token` | (empty) | **Server** | Required when `--addr` is not loopback; also via `VIBECODING_TOKEN` |
 
 Logging uses [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-common/tree/main/logger).
 
@@ -175,12 +176,13 @@ The image builds the **server** binary (`-tags server`, `CGO_ENABLED=0`). There 
 ```bash
 docker build -t vibecoding .
 docker run --rm -p 8090:8090 \
+  -e VIBECODING_TOKEN=change-me \
   -v "$HOME/.vibecoding:/data" \
   -v "$HOME/Codes:/Codes" \
   vibecoding --addr 0.0.0.0:8090 --data-dir /data
 ```
 
-- UI / API from the host: `http://127.0.0.1:8090`
+- UI / API from the host: `http://127.0.0.1:8090` (enter the same token when the UI prompts)
 - Configure repo paths inside the app as `/Codes/...` (paths as seen **inside** the container)
 
 ---
@@ -208,6 +210,7 @@ Desktop cannot be reliably cross-compiled here; build desktop on each target OS 
 ## Security notes
 
 - Server default bind is localhost-only (`127.0.0.1`). Use `--addr 0.0.0.0:8090` only when you intend remote access (e.g. Docker port publish).
+- Binding a non-loopback address **requires** `--token` or env `VIBECODING_TOKEN`. Callers must send `Authorization: Bearer <token>` or `X-Vibecoding-Token` (EventSource may use `?token=`).
 - API keys are stored in the local SQLite DB under `--data-dir`, not in the frontend.
 - Auto-Dev writes inside isolated worktrees under `{data-dir}/worktrees/...` and commits on feature branches; it does not checkout your primary working tree. Agent CLIs may skip interactive permission prompts only in that worktree cwd.
 - Merging refuses when the default branch is checked out and dirty — commit or stash first.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -49,39 +50,65 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func runTests(repo model.GitRepo) (output string, skipped bool, err error) {
+// runTests returns output, how (configured / auto-detected label), skipped, err.
+func runTests(repo model.GitRepo) (output, how string, skipped bool, err error) {
+	if cmdline := strings.TrimSpace(repo.TestCommand); cmdline != "" {
+		out, err := runShellCommand(repo.Path, cmdline)
+		return out, "configured: " + cmdline, false, err
+	}
 	switch {
 	case fileExists(filepath.Join(repo.Path, "go.mod")):
 		out, skipped, err := runCmd(repo.Path, "go", "test", "./...")
 		if skipped {
-			return out, true, nil
+			return out, "", true, nil
 		}
-		// Empty modules (go.mod only) report "no packages to test" with exit 1.
 		if err != nil && strings.Contains(out, "no packages to test") {
-			return out, true, nil
+			return out, "auto-detected: go test ./...", true, nil
 		}
-		return out, false, err
+		return out, "auto-detected: go test ./...", false, err
 	case fileExists(filepath.Join(repo.Path, "package.json")):
-		// prefer npm test if script exists — just try
 		if fileExists(filepath.Join(repo.Path, "pnpm-lock.yaml")) {
-			return runCmd(repo.Path, "pnpm", "test", "--if-present")
+			out, skipped, err := runCmd(repo.Path, "pnpm", "test", "--if-present")
+			return out, "auto-detected: pnpm test --if-present", skipped, err
 		}
-		return runCmd(repo.Path, "npm", "test", "--if-present")
+		out, skipped, err := runCmd(repo.Path, "npm", "test", "--if-present")
+		return out, "auto-detected: npm test --if-present", skipped, err
 	case fileExists(filepath.Join(repo.Path, "pyproject.toml")) || fileExists(filepath.Join(repo.Path, "pytest.ini")):
-		return runCmd(repo.Path, "pytest", "-q")
+		out, skipped, err := runCmd(repo.Path, "pytest", "-q")
+		return out, "auto-detected: pytest -q", skipped, err
 	default:
-		return "", true, nil
+		return "", "", true, nil
 	}
 }
 
-func runLint(repo model.GitRepo) (output string, skipped bool, err error) {
+func runLint(repo model.GitRepo) (output, how string, skipped bool, err error) {
+	if cmdline := strings.TrimSpace(repo.LintCommand); cmdline != "" {
+		out, err := runShellCommand(repo.Path, cmdline)
+		return out, "configured: " + cmdline, false, err
+	}
 	if fileExists(filepath.Join(repo.Path, "go.mod")) {
-		return runCmd(repo.Path, "go", "vet", "./...")
+		out, skipped, err := runCmd(repo.Path, "go", "vet", "./...")
+		return out, "auto-detected: go vet ./...", skipped, err
 	}
 	if fileExists(filepath.Join(repo.Path, "tsconfig.json")) {
-		return runCmd(repo.Path, "npx", "--no-install", "tsc", "--noEmit")
+		out, skipped, err := runCmd(repo.Path, "npx", "--no-install", "tsc", "--noEmit")
+		return out, "auto-detected: npx tsc --noEmit", skipped, err
 	}
-	return "", true, nil
+	return "", "", true, nil
+}
+
+func runShellCommand(dir, cmdline string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/c", cmdline)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", cmdline)
+	}
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
 }
 
 func runCmd(dir, name string, args ...string) (string, bool, error) {

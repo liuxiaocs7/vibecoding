@@ -22,6 +22,7 @@ type Server struct {
 	Runner *autodev.Runner
 	Hub    *autodev.Hub
 	Static fs.FS
+	Token  string // when set, /api/* (except health/OPTIONS) requires auth
 }
 
 func (s *Server) Handler() http.Handler {
@@ -95,7 +96,7 @@ func (s *Server) Handler() http.Handler {
 		})
 	}
 
-	return withAccessLog(withCORS(mux))
+	return withAccessLog(withCORS(withAuth(s.Token, mux)))
 }
 
 type statusWriter struct {
@@ -159,7 +160,7 @@ func withAccessLog(next http.Handler) http.Handler {
 func withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Vibecoding-Token")
 		w.Header().Set("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -167,6 +168,51 @@ func withCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// withAuth requires Bearer / X-Vibecoding-Token / ?token= when token is non-empty.
+// GET /api/health and OPTIONS are always allowed so the UI can discover authRequired.
+func withAuth(token string, next http.Handler) http.Handler {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet && r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		got := requestAPIToken(r)
+		if got == "" || got != token {
+			writeErr(w, http.StatusUnauthorized, "unauthorized: provide Authorization: Bearer <token> or X-Vibecoding-Token")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func requestAPIToken(r *http.Request) string {
+	if h := strings.TrimSpace(r.Header.Get("X-Vibecoding-Token")); h != "" {
+		return h
+	}
+	if auth := strings.TrimSpace(r.Header.Get("Authorization")); auth != "" {
+		const prefix = "Bearer "
+		if strings.HasPrefix(auth, prefix) {
+			return strings.TrimSpace(auth[len(prefix):])
+		}
+		if strings.HasPrefix(strings.ToLower(auth), "bearer ") {
+			return strings.TrimSpace(auth[7:])
+		}
+	}
+	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -235,5 +281,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":        "ok",
 		"timestamp":     time.Now().UTC().Format(time.RFC3339),
 		"llmConfigured": configured,
+		"authRequired":  strings.TrimSpace(s.Token) != "",
 	})
 }

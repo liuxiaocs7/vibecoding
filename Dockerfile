@@ -23,3 +23,6 @@ COPY --from=go /vibecoding /usr/local/bin/vibecoding
 EXPOSE 8090
 ENTRYPOINT ["vibecoding"]
 CMD ["--addr", "0.0.0.0:8090", "--data-dir", "/data"]
+# Non-localhost bind requires a token. Example:
+#   docker run -e VIBECODING_TOKEN=change-me -p 8090:8090 -v ... vibecoding
+# Or: --token change-me

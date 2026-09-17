@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -89,8 +90,12 @@ func TestBuildAgentPrompt(t *testing.T) {
 		Spec:        &model.DevSpec{RawMarkdown: "# Spec\ndo things"},
 		Extra:       "ONLY sub A",
 		Resume:      "session-1",
+		Snapshots: []repocontext.RepoSnapshot{{
+			Name:         "demo",
+			Instructions: "----- AGENTS.md -----\nAlways run make test.\n",
+		}},
 	})
-	for _, need := range []string{"demo", "Add hello", "# Spec", "ONLY sub A", "session-1", "Do NOT git push", "/tmp/wt"} {
+	for _, need := range []string{"demo", "Add hello", "# Spec", "ONLY sub A", "session-1", "Do NOT git push", "/tmp/wt", "make test", "Repository instructions"} {
 		if !strings.Contains(p, need) {
 			t.Fatalf("prompt missing %q:\n%s", need, p)
 		}
@@ -389,8 +394,19 @@ func (f *fakeChat) Chat(ctx context.Context, req llm.ChatRequest) (string, error
 func TestLLMExecutorRun(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	body := `{"fileChanges":[{"filePath":"hello.txt","repoName":"demo","action":"create","summary":"hi","modifiedCode":"hello world\n"}]}`
-	client := &fakeChat{responses: []string{body}}
+	runGit(t, dir, "init", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@t")
+	runGit(t, dir, "config", "user.name", "t")
+	runGit(t, dir, "commit", "--allow-empty", "-m", "init")
+
+	diff := "diff --git a/hello.txt b/hello.txt\n" +
+		"new file mode 100644\n" +
+		"--- /dev/null\n" +
+		"+++ b/hello.txt\n" +
+		"@@ -0,0 +1 @@\n" +
+		"+hello world\n"
+	body, _ := json.Marshal(map[string]string{"unifiedDiff": diff})
+	client := &fakeChat{responses: []string{string(body)}}
 	ex := NewLLMExecutor(client)
 	if ex.Name() != "llm" {
 		t.Fatal(ex.Name())
@@ -405,7 +421,7 @@ func TestLLMExecutorRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Changes) != 1 {
+	if len(res.Changes) != 1 || res.Changes[0].Action != "create" {
 		t.Fatalf("%+v", res)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "hello.txt"))
@@ -416,11 +432,16 @@ func TestLLMExecutorRun(t *testing.T) {
 	// JSONMode failure then plain retry
 	client2 := &fakeChat{
 		errs:      []error{fmt.Errorf("no json mode"), nil},
-		responses: []string{"", "```json\n" + body + "\n```"},
+		responses: []string{"", "```json\n" + string(body) + "\n```"},
 	}
 	ex2 := NewLLMExecutor(client2)
+	dir2 := t.TempDir()
+	runGit(t, dir2, "init", "-b", "main")
+	runGit(t, dir2, "config", "user.email", "t@t")
+	runGit(t, dir2, "config", "user.name", "t")
+	runGit(t, dir2, "commit", "--allow-empty", "-m", "init")
 	_, err = ex2.Run(context.Background(), CodingRequest{
-		RepoPath: t.TempDir(), RepoName: "demo", Title: "t2",
+		RepoPath: dir2, RepoName: "demo", Title: "t2",
 		Snapshots: []repocontext.RepoSnapshot{{Name: "demo"}},
 	}, func(phase, msg, details string) {})
 	if err != nil {
@@ -431,14 +452,59 @@ func TestLLMExecutorRun(t *testing.T) {
 	}
 }
 
+func TestLLMExecutorLegacyFullFileFallback(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	body := `{"fileChanges":[{"filePath":"hello.txt","repoName":"demo","action":"create","summary":"hi","modifiedCode":"hello world\n"}]}`
+	ex := NewLLMExecutor(&fakeChat{responses: []string{body}})
+	res, err := ex.Run(context.Background(), CodingRequest{
+		RepoPath: dir, RepoName: "demo", Title: "t",
+		Snapshots: []repocontext.RepoSnapshot{{Name: "demo"}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Changes) != 1 {
+		t.Fatalf("%+v", res)
+	}
+}
+
 func TestLLMExecutorEmptyChanges(t *testing.T) {
 	t.Parallel()
-	ex := NewLLMExecutor(&fakeChat{responses: []string{`{"fileChanges":[]}`}})
+	ex := NewLLMExecutor(&fakeChat{responses: []string{`{"unifiedDiff":""}`}})
 	_, err := ex.Run(context.Background(), CodingRequest{
 		RepoPath: t.TempDir(), RepoName: "demo",
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestParseUnifiedDiffJSONAndChanges(t *testing.T) {
+	t.Parallel()
+	diff := "diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-old\n+new\n"
+	raw := `{"unifiedDiff":` + mustJSONString(diff) + `}`
+	got, err := ParseUnifiedDiffJSON(raw)
+	if err != nil || !strings.Contains(got, "diff --git") {
+		t.Fatalf("%q %v", got, err)
+	}
+	ch := ChangesFromUnifiedDiff(got, "demo")
+	if len(ch) != 1 || ch[0].FilePath != "a.go" || ch[0].Action != "modify" {
+		t.Fatalf("%+v", ch)
+	}
+}
+
+func mustJSONString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
 }
 

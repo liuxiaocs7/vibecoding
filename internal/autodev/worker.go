@@ -221,12 +221,18 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 		}
 	}
 
+	author := "VibeBot"
+	if len(wtRepos) > 0 {
+		if n := gitx.UserName(wtRepos[0].Path); n != "" {
+			author = n
+		}
+	}
 	pr := &model.PRInfo{
 		ID:          "pr-" + uuid.NewString()[:8],
 		BranchName:  branchName,
 		Title:       "feat: " + issue.Title,
 		Description: r.prDescription(*issue),
-		Author:      "VibeBot",
+		Author:      author,
 		CreatedAt:   model.NowISO(),
 		Status:      "open",
 		DiffStats:   r.collectDiffStats(wtRepos),

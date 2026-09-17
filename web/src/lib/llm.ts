@@ -1,5 +1,6 @@
 import { ChatMessage, ModelConfig } from '../types';
 import { readSSE } from './stream';
+import { authHeaders } from './api';
 
 export const LLM_AUTO_ATTEMPTS = 3;
 
@@ -54,6 +55,7 @@ export interface ChatRequestParams {
   resume?: boolean;
   signal?: AbortSignal;
   onDelta?: (chunk: string) => void;
+  onStatus?: (msg: string) => void;
 }
 
 export async function sendLLMChat(params: ChatRequestParams): Promise<string> {
@@ -62,6 +64,7 @@ export async function sendLLMChat(params: ChatRequestParams): Promise<string> {
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
+      ...authHeaders(),
     },
     body: JSON.stringify({
       prompt: params.prompt,
@@ -93,6 +96,8 @@ export async function sendLLMChat(params: ChatRequestParams): Promise<string> {
     if (ev.type === 'delta' && ev.text) {
       text += ev.text;
       params.onDelta?.(ev.text);
+    } else if (ev.type === 'status' && ev.message) {
+      params.onStatus?.(ev.message);
     } else if (ev.type === 'error') {
       streamError = ev.error || 'stream error';
     } else if (ev.type === 'done' && typeof ev.text === 'string') {
@@ -115,7 +120,7 @@ export async function testOpenAPIConnection(config: {
   try {
     const res = await fetch('/api/test-openapi', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify(config),
     });
     const data = await res.json();

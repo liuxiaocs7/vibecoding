@@ -1,11 +1,42 @@
 import type { Project, Issue, ModelConfig, DevSpec, PRInfo, AutoDevLog } from '../types';
 import { readSSE } from './stream';
 
+const TOKEN_STORAGE_KEY = 'vibecoding_api_token';
+
+export function getAPIToken(): string {
+  try {
+    return sessionStorage.getItem(TOKEN_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+export function setAPIToken(token: string) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+    else sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Headers for authenticated API calls (Bearer + X-Vibecoding-Token). */
+export function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const h: Record<string, string> = { ...(extra || {}) };
+  const token = getAPIToken();
+  if (token) {
+    h.Authorization = `Bearer ${token}`;
+    h['X-Vibecoding-Token'] = token;
+  }
+  return h;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...authHeaders(),
       ...(init?.headers || {}),
     },
   });
@@ -47,6 +78,7 @@ async function streamSpec(
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
+      ...authHeaders(),
     },
     body: JSON.stringify(body),
     signal: opts?.signal,
@@ -95,6 +127,7 @@ export interface HealthInfo {
   status: string;
   timestamp: string;
   llmConfigured: boolean;
+  authRequired?: boolean;
 }
 
 export interface AutoDevJob {
@@ -270,7 +303,9 @@ export function subscribeJobEvents(
   onEvent: (ev: JobEvent) => void,
   onError?: (err: Error) => void
 ): () => void {
-  const es = new EventSource(`/api/auto-dev/jobs/${jobId}/events`);
+  const token = getAPIToken();
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  const es = new EventSource(`/api/auto-dev/jobs/${jobId}/events${qs}`);
   es.onmessage = (msg) => {
     try {
       const ev = JSON.parse(msg.data) as JobEvent;

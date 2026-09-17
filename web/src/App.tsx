@@ -3,7 +3,7 @@ import { Project, Issue, ModelConfig, IssueStatus, ExecutorConfig } from './type
 import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './lib/storage';
 import { Language, ThemeStyle, getTranslation } from './lib/i18n';
 import { THEME_CONFIGS } from './lib/theme';
-import { api, subscribeJobEvents } from './lib/api';
+import { api, subscribeJobEvents, getAPIToken, setAPIToken } from './lib/api';
 import { hasSubRequirements, specReadyForDev, hasUnverifiedModifies, backlogBlockReason } from './lib/subreq';
 import { KanbanBoard } from './components/KanbanBoard';
 import { IssueDetailModal, ISSUE_SESSION_DOCK_ID } from './components/IssueDetailModal';
@@ -82,13 +82,32 @@ export default function App() {
     (async () => {
       try {
         setLoading(true);
-        const [health, model, prefs, projs] = await Promise.all([
-          api.health(),
+        let health = await api.health();
+        if (health.authRequired && !getAPIToken()) {
+          const entered = window.prompt(
+            language === 'zh'
+              ? '服务端需要 API Token（非本机绑定）。请输入 VIBECODING_TOKEN / --token：'
+              : 'Server requires an API token (non-localhost bind). Enter VIBECODING_TOKEN / --token:'
+          );
+          if (entered) setAPIToken(entered.trim());
+          else {
+            if (!cancelled) {
+              setLoadError(
+                language === 'zh' ? '需要 API Token 才能连接后端' : 'API token required to connect to backend'
+              );
+              setLoading(false);
+            }
+            return;
+          }
+        }
+        const [model, prefs, projs] = await Promise.all([
           api.getModel(),
           api.getUIPrefs(),
           api.listProjects(),
         ]);
         if (cancelled) return;
+        // Refresh health after token may have been set (llmConfigured still public).
+        health = await api.health();
         setLlmReady(!!health.llmConfigured);
         setGlobalModelConfig(model);
         setProjects(projs);

@@ -20,8 +20,19 @@ func (s *Server) handleGenerateReqDoc(w http.ResponseWriter, r *http.Request) {
 	_ = decodeJSON(r, &body)
 
 	cfg, _ := s.resolveModel(issue.ProjectID)
+	proj, _ := s.Store.GetProject(issue.ProjectID)
+	repos := s.associatedRepos(issue, proj)
+	prompt := resumeUserPrompt(body, "请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收标准、约束）。")
+	query := reqQueryText(issue, nil) + "\n\n" + prompt
+	excerptBlock, sourceFiles, err := loadRepoExcerptsForQuery(repos, query)
+	if err != nil {
+		writeErr(w, 500, "scan associated repos: "+err.Error())
+		return
+	}
+
 	system := `You are a Senior VibeCoding product analyst.
 Update the REQUIREMENT document only (what to build). Do NOT write architecture, file lists, or implementation steps.
+When SOURCE EXCERPTS or a repository index are provided, use them to align naming, existing fields, and product constraints with the real codebase. Do NOT claim you have no source access when that material is present.
 
 Return ONLY a JSON object (no markdown fences) with:
 - chatReply: short natural-language reply (2-8 sentences)
@@ -43,9 +54,10 @@ Rules:
 	if issue.ReqDoc != nil {
 		prev = issue.ReqDoc.RawMarkdown
 	}
-	prompt := resumeUserPrompt(body, "请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收标准、约束）。")
 	user := fmt.Sprintf(`Issue title: %s
 Description: %s
+
+Associated repositories: %s
 
 Previous Requirement Markdown (may be empty):
 -----
@@ -55,13 +67,19 @@ Previous Requirement Markdown (may be empty):
 Latest user message:
 %s
 
+%s
+
 Update the requirement document and return JSON.`,
-		issue.Title, issue.PromptDescription(), prev, prompt)
+		issue.Title, issue.PromptDescription(), formatRepoList(repos), prev, prompt, excerptBlock)
 
 	msgs := recentChatMsgs(body.Messages)
 	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
 
-	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
+	var preStatuses []string
+	if len(repos) > 0 {
+		preStatuses = []string{fmt.Sprintf("reading %d files", sourceFiles)}
+	}
+	s.streamOrCompleteJSON(w, r, cfg, system, msgs, preStatuses, func(text string) (any, error) {
 		doc, chatReply, err := llm.ParseReqDocJSON(text, issue.Title)
 		if err != nil {
 			return nil, err
@@ -78,7 +96,9 @@ Update the requirement document and return JSON.`,
 		if saved != nil {
 			issue = saved
 		}
-		return reqDocDonePayload(issue.ReqDoc, chatReply, text, issue), nil
+		payload := reqDocDonePayload(issue.ReqDoc, chatReply, text, issue)
+		payload["sourceFilesRead"] = sourceFiles
+		return payload, nil
 	})
 }
 

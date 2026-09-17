@@ -365,6 +365,21 @@ export function useIssueChat(params: {
             resume: resumeSession || undefined,
             signal: ac.signal,
             onDelta: appendDelta,
+            onStatus: (msg: string) => {
+              const label =
+                msg === 'indexing'
+                  ? lang === 'zh'
+                    ? '正在索引关联仓库…'
+                    : 'Indexing associated repos…'
+                  : msg.startsWith('reading')
+                    ? lang === 'zh'
+                      ? `正在读取源码摘要（${msg}）…`
+                      : `Reading source excerpts (${msg})…`
+                    : lang === 'zh'
+                      ? '正在请求模型…'
+                      : 'Calling model…';
+              if (!streamed) patchProcess(label, 'running');
+            },
           });
 
           patchProcess(streamed || responseText, 'done');

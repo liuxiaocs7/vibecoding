@@ -406,3 +406,103 @@ func TestPushOriginToBareRemote(t *testing.T) {
 		t.Fatal("empty branch should fail")
 	}
 }
+
+func TestCommitAllUsesLocalIdentity(t *testing.T) {
+	dir := initRepo(t, "main")
+	writeFile(t, filepath.Join(dir, "a.txt"), "a\n")
+	if err := CommitAll(dir, "feat: add a\n\nIssue: abcdef12"); err != nil {
+		t.Fatal(err)
+	}
+	if UserName(dir) != "t" {
+		t.Fatalf("user.name=%q", UserName(dir))
+	}
+	log, err := run(dir, "log", "-1", "--pretty=%an <%ae>")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log, "t <t@t>") {
+		t.Fatalf("author=%q", log)
+	}
+	msg, err := run(dir, "log", "-1", "--pretty=%B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(msg, "Issue: abcdef12") {
+		t.Fatalf("message=%q", msg)
+	}
+}
+
+func TestCommitAllFailsWithoutIdentity(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	// Isolate from the developer's global git config.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	runGit(t, dir, "-c", "user.name=bootstrap", "-c", "user.email=b@b", "commit", "--allow-empty", "-m", "init")
+	// Clear local identity if any was inherited; do not set user.*
+	_ = exec.Command("git", "-C", dir, "config", "--unset-all", "user.name").Run()
+	_ = exec.Command("git", "-C", dir, "config", "--unset-all", "user.email").Run()
+	writeFile(t, filepath.Join(dir, "x.txt"), "x\n")
+	err := CommitAll(dir, "feat: no identity")
+	if err == nil {
+		t.Fatal("expected commit to fail without user.email")
+	}
+	if !strings.Contains(err.Error(), "git commit:") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestApplyUnifiedDiffCreateModifyDelete(t *testing.T) {
+	dir := initRepo(t, "main")
+	writeFile(t, filepath.Join(dir, "keep.txt"), "line1\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "base")
+
+	create := "diff --git a/new.txt b/new.txt\nnew file mode 100644\n--- /dev/null\n+++ b/new.txt\n@@ -0,0 +1 @@\n+created\n"
+	if err := ApplyUnifiedDiff(dir, create); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(filepath.Join(dir, "new.txt"))
+	if string(data) != "created\n" {
+		t.Fatalf("%q", data)
+	}
+
+	modify := "diff --git a/keep.txt b/keep.txt\n--- a/keep.txt\n+++ b/keep.txt\n@@ -1 +1 @@\n-line1\n+line2\n"
+	if err := ApplyUnifiedDiff(dir, modify); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(filepath.Join(dir, "keep.txt"))
+	if string(data) != "line2\n" {
+		t.Fatalf("%q", data)
+	}
+
+	del := "diff --git a/new.txt b/new.txt\ndeleted file mode 100644\n--- a/new.txt\n+++ /dev/null\n@@ -1 +0,0 @@\n-created\n"
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "stage new")
+	if err := ApplyUnifiedDiff(dir, del); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new.txt")); !os.IsNotExist(err) {
+		t.Fatalf("expected deleted: %v", err)
+	}
+}
+
+func TestApplyUnifiedDiffRejectsEscape(t *testing.T) {
+	dir := initRepo(t, "main")
+	bad := "diff --git a/../evil b/../evil\n--- a/../evil\n+++ b/../evil\n@@ -0,0 +1 @@\n+x\n"
+	if err := ApplyUnifiedDiff(dir, bad); err == nil || !strings.Contains(err.Error(), "unsafe") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestApplyUnifiedDiffBadHunk(t *testing.T) {
+	dir := initRepo(t, "main")
+	writeFile(t, filepath.Join(dir, "a.txt"), "hello\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "commit", "-m", "a")
+	bad := "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-not-the-content\n+world\n"
+	if err := ApplyUnifiedDiff(dir, bad); err == nil {
+		t.Fatal("expected apply failure")
+	}
+}

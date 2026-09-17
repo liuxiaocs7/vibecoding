@@ -418,6 +418,30 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                       />
                       <p className={`text-[10px] mt-1 ${themeConfig.textMuted}`}>{t.setupCommandHint}</p>
                     </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <label className={`block text-[10px] mb-1 ${themeConfig.textMuted}`}>{t.testCommandLabel}</label>
+                        <input
+                          type="text"
+                          value={repo.testCommand || ''}
+                          onChange={(e) => handleUpdateRepo(idx, 'testCommand', e.target.value)}
+                          placeholder="make test"
+                          className={`w-full px-2.5 py-1.5 border rounded text-xs font-mono focus:outline-none focus:border-indigo-500 ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                        />
+                        <p className={`text-[10px] mt-1 ${themeConfig.textMuted}`}>{t.testCommandHint}</p>
+                      </div>
+                      <div>
+                        <label className={`block text-[10px] mb-1 ${themeConfig.textMuted}`}>{t.lintCommandLabel}</label>
+                        <input
+                          type="text"
+                          value={repo.lintCommand || ''}
+                          onChange={(e) => handleUpdateRepo(idx, 'lintCommand', e.target.value)}
+                          placeholder="golangci-lint run"
+                          className={`w-full px-2.5 py-1.5 border rounded text-xs font-mono focus:outline-none focus:border-indigo-500 ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                        />
+                        <p className={`text-[10px] mt-1 ${themeConfig.textMuted}`}>{t.lintCommandHint}</p>
+                      </div>
+                    </div>
                   </div>
                 ))}
                 {repoMsg && (

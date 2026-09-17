@@ -114,6 +114,7 @@ curl -s http://127.0.0.1:8090/api/health
 | `--log-level` | `info` | 两者 | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | 两者 | `text` / `json` |
 | `--log-output` | `stdout` | 两者 | `stdout` / `stderr` / `discard` / 文件路径 |
+| `--token` |（空） | **服务版** | 非 loopback 绑定必填；也可用环境变量 `VIBECODING_TOKEN` |
 
 日志使用 [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-common/tree/main/logger)。
 
@@ -175,12 +176,13 @@ make dev
 ```bash
 docker build -t vibecoding .
 docker run --rm -p 8090:8090 \
+  -e VIBECODING_TOKEN=change-me \
   -v "$HOME/.vibecoding:/data" \
   -v "$HOME/Codes:/Codes" \
   vibecoding --addr 0.0.0.0:8090 --data-dir /data
 ```
 
-- 宿主机访问 UI / API：`http://127.0.0.1:8090`
+- 宿主机访问 UI / API：`http://127.0.0.1:8090`（UI 会提示输入同一 token）
 - 在应用内把仓库路径配置为 `/Codes/...`（即**容器内**看到的路径）
 
 ---
@@ -208,6 +210,7 @@ make release
 ## 安全说明
 
 - 服务版默认仅绑定本机（`127.0.0.1`）。仅当确实需要远程访问（如 Docker 端口映射）时才使用 `--addr 0.0.0.0:8090`。
+- 绑定非 loopback 地址时**必须**提供 `--token` 或环境变量 `VIBECODING_TOKEN`。调用方需带 `Authorization: Bearer <token>` 或 `X-Vibecoding-Token`（EventSource 可用 `?token=`）。
 - API Key 存储在 `--data-dir` 下的本地 SQLite 中，不保存在前端。
 - Auto-Dev 写入隔离 worktree（`{data-dir}/worktrees/...`）并在特性分支上提交，不会 checkout 你的主工作区；Agent CLI 的跳过权限提示仅作用于该 worktree cwd。
 - 若默认分支正被 checkout 且工作区 dirty，合并会被拒绝——请先 commit 或 stash。

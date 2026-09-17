@@ -421,7 +421,7 @@ func FormatDesignExcerptsForPrompt(ex *DesignExcerpt) string {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("Source excerpts from associated local repositories (read-only scan).\n")
+	b.WriteString("SOURCE EXCERPTS from associated local repositories (read-only scan on this machine).\n")
 	b.WriteString("Only cite paths/symbols that appear below. Do not invent filenames.\n\n")
 	for _, r := range ex.Repos {
 		fmt.Fprintf(&b, "### Repository: %s (%s)\n", r.Name, r.Path)
@@ -461,4 +461,46 @@ func CapWantedFiles(wanted []WantedFile, max int) []WantedFile {
 		}
 	}
 	return out
+}
+
+// AutoExcerpts indexes repos from query text and reads top-scoring candidates
+// without an LLM locate pass (used by requirements chat / req-doc).
+func AutoExcerpts(repos []model.GitRepo, query string, maxFiles int) (*DesignExcerpt, *DesignIndex, error) {
+	if maxFiles <= 0 {
+		maxFiles = 8
+	}
+	idx, err := BuildDesignIndex(repos, query)
+	if err != nil {
+		return nil, nil, err
+	}
+	var wanted []WantedFile
+	for _, ri := range idx.Repos {
+		for _, c := range ri.Candidates {
+			wanted = append(wanted, WantedFile{RepoName: ri.Name, FilePath: c.Path, HintLine: c.HitLine})
+			if len(wanted) >= maxFiles {
+				break
+			}
+		}
+		if len(wanted) >= maxFiles {
+			break
+		}
+	}
+	wanted = CapWantedFiles(wanted, maxFiles)
+	ex, err := ReadDesignExcerpts(repos, wanted, idx)
+	if err != nil {
+		return nil, idx, err
+	}
+	return ex, idx, nil
+}
+
+// ExcerptFileCount returns how many file windows were loaded.
+func ExcerptFileCount(ex *DesignExcerpt) int {
+	if ex == nil {
+		return 0
+	}
+	n := 0
+	for _, r := range ex.Repos {
+		n += len(r.Files)
+	}
+	return n
 }

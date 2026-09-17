@@ -1,5 +1,7 @@
 /** Save a text file. WebView/Safari ignore <a download>, so we never rely on it. */
 
+import { authHeaders } from './api';
+
 type SavePickerHandle = {
   createWritable: () => Promise<{
     write: (data: Blob | string) => Promise<void>;
@@ -64,7 +66,7 @@ async function saveViaLocalAPI(filename: string, contents: string): Promise<Save
   try {
     const res = await fetch('/api/export-file', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
       body: JSON.stringify({ filename, contents }),
     });
     const data = (await res.json().catch(() => ({}))) as { path?: string; error?: string };

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/ymhhh/go-common/logger"
 	"github.com/ymhhh/vibecoding/internal/api"
 	"github.com/ymhhh/vibecoding/internal/applog"
 	"github.com/ymhhh/vibecoding/internal/autodev"
@@ -35,6 +36,12 @@ func New(cfg *config.Config, static fs.FS) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
+	if n, err := store.FailOrphanJobs(); err != nil {
+		_ = store.Close()
+		return nil, fmt.Errorf("fail orphan jobs: %w", err)
+	} else if n > 0 {
+		logger.L().WithField("count", n).Warn("marked orphan auto-dev jobs as failed after restart")
+	}
 	hub := autodev.NewHub()
 	llmClient := llm.New()
 	wtRoot := filepath.Join(cfg.DataDir, "worktrees")
@@ -49,6 +56,7 @@ func New(cfg *config.Config, static fs.FS) (*App, error) {
 		Runner: runner,
 		Hub:    hub,
 		Static: static,
+		Token:  cfg.Token,
 	}
 	return &App{Cfg: cfg, Store: store, Server: srv}, nil
 }

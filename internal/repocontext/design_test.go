@@ -100,6 +100,34 @@ func TestBuildDesignIndexAndWindowHitMidFile(t *testing.T) {
 	if !strings.Contains(prompt, "TargetSymbol") {
 		t.Fatal("prompt missing symbol")
 	}
+	if !strings.Contains(prompt, "SOURCE EXCERPTS") {
+		t.Fatal("prompt missing SOURCE EXCERPTS header")
+	}
+}
+
+func TestAutoExcerptsLoadsTopCandidates(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-b", "main")
+	writeRepoFile(t, dir, "internal/dto/order.go", "package dto\n\ntype CreateOrderReq struct {\n\tSkuID string `json:\"skuId\"`\n}\n")
+	writeRepoFile(t, dir, "README.md", "# demo\n")
+	runGit(t, dir, "add", ".")
+	runGit(t, dir, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-m", "init")
+
+	repos := []model.GitRepo{{ID: "1", Name: "ziya", Path: dir, Language: "go"}}
+	ex, idx, err := AutoExcerpts(repos, "CreateOrderReq skuId naming must match ziya", 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idx == nil || len(idx.Repos) != 1 {
+		t.Fatalf("index=%+v", idx)
+	}
+	if ExcerptFileCount(ex) == 0 {
+		t.Fatalf("expected file excerpts, got %+v", ex)
+	}
+	prompt := FormatDesignExcerptsForPrompt(ex)
+	if !strings.Contains(prompt, "CreateOrderReq") && !strings.Contains(prompt, "skuId") {
+		t.Fatalf("excerpt prompt missing symbols: %s", trunc(prompt, 400))
+	}
 }
 
 func TestReadDesignExcerptsSkipsEscapeAndCapsBudget(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ymhhh/vibecoding/internal/model"
+	"github.com/ymhhh/vibecoding/internal/repocontext"
 )
 
 const safetyRules = `Safety rules (mandatory):
@@ -32,6 +33,9 @@ func BuildAgentPrompt(req CodingRequest) string {
 		if md != "" {
 			fmt.Fprintf(&b, "Dev Spec:\n%s\n\n", md)
 		}
+	}
+	if instr := repocontext.InstructionsForPrompt(req.Snapshots); instr != "" {
+		fmt.Fprintf(&b, "Repository instructions:\n%s\n\n", instr)
 	}
 	if extra := strings.TrimSpace(req.Extra); extra != "" {
 		fmt.Fprintf(&b, "Additional instructions (scope / repair):\n%s\n\n", extra)

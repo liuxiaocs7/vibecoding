@@ -452,22 +452,27 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
           )}
         </div>
 
-        <div className="flex items-center gap-2">
-          <input
-            type="text"
+        <div className="flex items-end gap-2">
+          <textarea
             value={inputPrompt}
             onChange={(e) => setInputPrompt(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                void handleSendMessage();
+              }
+            }}
+            rows={3}
             placeholder={
               lang === 'zh'
                 ? canDesign
-                  ? '输入讨论点；写回设计请说「更新开发设计」…'
-                  : '输入问题或讨论点…'
+                  ? '输入讨论点（Enter 发送，Shift+Enter 换行）；写回设计请说「更新开发设计」…'
+                  : '输入问题或讨论点…（Enter 发送，Shift+Enter 换行）'
                 : canDesign
-                  ? 'Discuss; say “update Dev Spec” to write the design…'
-                  : 'Ask or discuss…'
+                  ? 'Discuss (Enter send, Shift+Enter newline); say “update Dev Spec” to write the design…'
+                  : 'Ask or discuss… (Enter send, Shift+Enter newline)'
             }
-            className={`flex-1 px-3.5 py-2.5 border rounded-xl text-[13px] focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+            className={`flex-1 min-h-[4.5rem] max-h-40 px-3.5 py-2.5 border rounded-xl text-[13px] leading-relaxed resize-y focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
           />
           <button
             onClick={() => handleSendMessage()}
