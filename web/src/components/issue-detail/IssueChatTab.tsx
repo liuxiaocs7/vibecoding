@@ -1,4 +1,4 @@
-import React, { RefObject } from 'react';
+import React, { RefObject, useMemo } from 'react';
 import { Issue, ChatMessage, PendingLLMSession } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
@@ -13,10 +13,10 @@ import {
   User,
   Loader2,
   Eye,
-  ChevronDown,
-  ChevronUp,
+  ChevronRight,
   Send,
   FileText,
+  X,
 } from 'lucide-react';
 import { formatFileSize } from '../../lib/attachments';
 
@@ -40,6 +40,53 @@ interface IssueChatTabProps {
   pendingLlm?: PendingLLMSession | null;
   onRetrySession?: () => void;
   onRegenerate?: () => void;
+}
+
+/** Prefer chatReply when the bubble accidentally stored a JSON envelope. */
+function displayMessageText(text: string, lang: Language): string {
+  const raw = (text || '').trim();
+  if (!(raw.startsWith('{') && (raw.includes('"chatReply"') || raw.includes('"rawMarkdown"')))) {
+    return text;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { chatReply?: string; rawMarkdown?: string };
+    if (parsed.chatReply?.trim()) return parsed.chatReply.trim();
+    if (parsed.rawMarkdown?.trim()) {
+      return lang === 'zh'
+        ? '已更新文档，请到「需求文档 & 开发设计」查看全文。'
+        : 'Document updated — open the Spec tab for the full text.';
+    }
+  } catch {
+    const m = raw.match(/"chatReply"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (m?.[1]) {
+      return m[1]
+        .replace(/\\n/g, '\n')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\');
+    }
+  }
+  return lang === 'zh'
+    ? '已生成结构化结果，请到文档页查看。'
+    : 'Structured result ready — see the Spec tab.';
+}
+
+/** Side-rail preview: avoid dumping full JSON while streaming. */
+function processBodyPreview(body: string, lang: Language): string {
+  const raw = (body || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('{') && (raw.includes('"chatReply"') || raw.includes('"rawMarkdown"'))) {
+    try {
+      const parsed = JSON.parse(raw) as { chatReply?: string };
+      if (parsed.chatReply?.trim()) return parsed.chatReply.trim();
+    } catch {
+      const m = raw.match(/"chatReply"\s*:\s*"((?:\\.|[^"\\])*)"/);
+      if (m?.[1]) {
+        return m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"').slice(0, 800);
+      }
+    }
+    return lang === 'zh' ? '正在生成结构化文档…' : 'Generating structured document…';
+  }
+  return body;
 }
 
 export const IssueChatTab: React.FC<IssueChatTabProps> = ({
@@ -72,218 +119,291 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
     (issue.subRequirements || []).some((s) => !!s.devSpec?.rawMarkdown?.trim())
   );
 
-  return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden">
-      <div className="flex-1 p-6 overflow-y-auto space-y-4">
-        {splitIssue && (
-          <SubRequirementBar
-            issue={issue}
-            selectedScope={selectedScope}
-            onSelect={setSelectedScope}
-            lang={lang}
-            themeStyle={themeStyle}
-          />
-        )}
+  const latestEntry = modelProcess.entries[modelProcess.entries.length - 1];
+  const activeEntry = useMemo(() => {
+    const id = modelProcess.activeId || latestEntry?.id;
+    return modelProcess.entries.find((e) => e.id === id) || latestEntry;
+  }, [modelProcess.activeId, modelProcess.entries, latestEntry]);
 
-        {(issue.description || (issue.attachments && issue.attachments.length > 0)) && (
-          <div className={`rounded-2xl border p-4 space-y-3 ${themeConfig.cardBg}`}>
-            {issue.description && (
-              <div className={`text-sm leading-relaxed whitespace-pre-wrap ${themeConfig.textSecondary}`}>
-                {issue.description}
-              </div>
-            )}
-            {(issue.attachments || []).length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {(issue.attachments || []).map((att) => (
-                  <div
-                    key={att.id}
-                    className={`flex items-center gap-2 px-2.5 py-1.5 rounded-xl border text-[11px] ${themeConfig.inputBg} ${themeConfig.inputBorder} ${themeConfig.textSecondary}`}
-                  >
-                    {att.kind === 'image' && att.dataUrl ? (
-                      <img src={att.dataUrl} alt="" className="w-7 h-7 rounded-md object-cover" />
-                    ) : (
-                      <FileText className="w-3.5 h-3.5 text-indigo-400" />
-                    )}
-                    <span className="max-w-[160px] truncate">{att.name}</span>
-                    <span className={themeConfig.textMuted}>{formatFileSize(att.size)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {visibleMessages.map((msg) => (
-          <div
-            key={msg.id}
-            className={`flex items-start gap-3 ${
-              msg.sender === 'user' ? 'flex-row-reverse' : ''
-            }`}
-          >
-            <div
-              className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 text-xs font-bold ${
-                msg.sender === 'user'
-                  ? 'bg-indigo-600 text-white'
-                  : msg.sender === 'ai'
-                  ? 'bg-purple-600 text-white'
-                  : `${themeConfig.cardBg} ${themeConfig.textMuted}`
-              }`}
-            >
-              {msg.sender === 'user' ? (
-                <User className="w-4 h-4" />
-              ) : msg.sender === 'ai' ? (
-                <Bot className="w-4 h-4" />
-              ) : (
-                <Sparkles className="w-4 h-4" />
+  const openProcessRail = (id?: string) => {
+    setModelProcess((prev) => ({
+      ...prev,
+      expanded: true,
+      activeId: id || prev.activeId || prev.entries[prev.entries.length - 1]?.id,
+    }));
+  };
+
+  const closeProcessRail = () => {
+    setModelProcess((prev) => ({ ...prev, expanded: false }));
+  };
+
+  return (
+    <div className="flex-1 flex flex-col h-full min-h-0 overflow-hidden">
+      {/* Main row: chat thread + optional process rail (Cursor-style) */}
+      <div className="flex-1 flex min-h-0 overflow-hidden">
+        <div className="flex-1 min-w-0 p-4 sm:p-5 overflow-y-auto space-y-3">
+          {splitIssue && (
+            <SubRequirementBar
+              issue={issue}
+              selectedScope={selectedScope}
+              onSelect={setSelectedScope}
+              lang={lang}
+              themeStyle={themeStyle}
+            />
+          )}
+
+          {(issue.description || (issue.attachments && issue.attachments.length > 0)) && (
+            <div className={`rounded-xl border px-3.5 py-3 space-y-2 ${themeConfig.cardBg}`}>
+              {issue.description && (
+                <div className={`text-[13px] leading-relaxed whitespace-pre-wrap ${themeConfig.textSecondary}`}>
+                  {issue.description}
+                </div>
+              )}
+              {(issue.attachments || []).length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {(issue.attachments || []).map((att) => (
+                    <div
+                      key={att.id}
+                      className={`flex items-center gap-2 px-2.5 py-1.5 rounded-lg border text-[11px] ${themeConfig.inputBg} ${themeConfig.inputBorder} ${themeConfig.textSecondary}`}
+                    >
+                      {att.kind === 'image' && att.dataUrl ? (
+                        <img src={att.dataUrl} alt="" className="w-7 h-7 rounded-md object-cover" />
+                      ) : (
+                        <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                      )}
+                      <span className="max-w-[160px] truncate">{att.name}</span>
+                      <span className={themeConfig.textMuted}>{formatFileSize(att.size)}</span>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
+          )}
 
-            <div
-              className={`max-w-[80%] rounded-2xl p-4 text-xs leading-relaxed backdrop-blur-md ${
-                msg.sender === 'user'
-                  ? 'bg-indigo-600/20 border border-indigo-500/40 text-indigo-900 dark:text-indigo-100 rounded-tr-none'
-                  : msg.sender === 'ai'
-                  ? `${themeConfig.cardBg} border ${themeConfig.subtleBorder} ${themeConfig.textPrimary} rounded-tl-none font-sans select-text`
-                  : `${themeConfig.inputBg} border ${themeConfig.inputBorder} ${themeConfig.textMuted} font-mono`
-              }`}
-            >
-              <div className={`flex items-center justify-between gap-4 mb-1 border-b pb-1 text-[10px] ${themeConfig.subtleBorder} ${themeConfig.textMuted}`}>
-                <span className="font-semibold uppercase">
-                  {msg.sender === 'user' ? '开发者' : msg.sender === 'ai' ? 'Vibe AI Copilot' : '系统说明'}
-                </span>
-                <span>{msg.timestamp}</span>
-              </div>
-              {msg.sender === 'ai' ? <MarkdownView text={msg.text} /> : <div className="select-text whitespace-pre-wrap">{msg.text}</div>}
-            </div>
-          </div>
-        ))}
-        {isSending && (
-          <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-300 p-2">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span>AI 大模型正在思考分析并处理需求...</span>
-            <button
-              className="ml-2 underline"
-              onClick={() => abortRef.current?.abort()}
-            >
-              {t.cancel}
-            </button>
-          </div>
-        )}
-        {chatError && !pendingLlm && (
-          <div className="text-xs text-rose-500 px-2 select-text">{chatError}</div>
-        )}
-        <LLMRecoveryBar
-          session={pendingLlm || null}
-          lang={lang}
-          themeStyle={themeStyle}
-          busy={isSending}
-          onRetrySession={() => onRetrySession?.()}
-          onRegenerate={() => onRegenerate?.()}
-        />
-        <div ref={messagesEndRef} />
-      </div>
+          {visibleMessages.map((msg) => {
+            const body = displayMessageText(msg.text, lang);
+            return (
+              <div
+                key={msg.id}
+                className={`flex items-start gap-2.5 ${msg.sender === 'user' ? 'flex-row-reverse' : ''}`}
+              >
+                <div
+                  className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
+                    msg.sender === 'user'
+                      ? 'bg-indigo-600 text-white'
+                      : msg.sender === 'ai'
+                      ? 'bg-violet-600 text-white'
+                      : `${themeConfig.cardBg} ${themeConfig.textMuted}`
+                  }`}
+                >
+                  {msg.sender === 'user' ? (
+                    <User className="w-3.5 h-3.5" />
+                  ) : msg.sender === 'ai' ? (
+                    <Bot className="w-3.5 h-3.5" />
+                  ) : (
+                    <Sparkles className="w-3.5 h-3.5" />
+                  )}
+                </div>
 
-      {/* Ephemeral model process: compact bar + upward overlay (does not crush chat scroll). */}
-      {modelProcess.entries.length > 0 && (
-        <div className={`relative shrink-0 border-t z-20 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
-          {modelProcess.expanded && (
-            <div
-              className={`absolute bottom-full left-0 right-0 max-h-[42vh] overflow-y-auto border-t shadow-[0_-8px_24px_rgba(0,0,0,0.12)] ${themeConfig.subtleBorder} ${themeConfig.modalBg}`}
-            >
-              <div className="px-4 py-3 space-y-2">
-                {[...modelProcess.entries].reverse().map((entry) => (
+                <div
+                  className={`max-w-[min(720px,85%)] px-3.5 py-2.5 text-[13px] leading-relaxed ${
+                    msg.sender === 'user'
+                      ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-md'
+                      : msg.sender === 'ai'
+                      ? `${themeConfig.textPrimary} rounded-2xl rounded-tl-md`
+                      : `${themeConfig.textMuted} font-mono text-[12px]`
+                  }`}
+                >
                   <div
-                    key={entry.id}
-                    className={`rounded-lg border p-2.5 text-[11px] ${themeConfig.cardBg} ${themeConfig.subtleBorder}`}
+                    className={`flex items-center gap-2 mb-1 text-[10px] ${
+                      msg.sender === 'user' ? 'text-indigo-100/80' : themeConfig.textMuted
+                    }`}
                   >
-                    <div className={`flex items-center justify-between gap-2 mb-1.5 ${themeConfig.textMuted}`}>
-                      <span className="font-mono shrink-0">{entry.at}</span>
-                      <span
-                        className={
-                          entry.status === 'running'
-                            ? 'text-indigo-500'
-                            : entry.status === 'error'
-                            ? 'text-rose-500'
-                            : 'text-emerald-500'
-                        }
-                      >
-                        {entry.status === 'running'
-                          ? t.processStreaming
-                          : entry.status === 'error'
-                          ? t.processError
-                          : t.processDone}
-                      </span>
-                    </div>
-                    <div className={`mb-1 truncate ${themeConfig.textSecondary}`} title={entry.prompt}>
-                      → {entry.prompt}
-                    </div>
-                    <pre
-                      ref={(el) => {
-                        if (el && entry.status === 'running') {
-                          el.scrollTop = el.scrollHeight;
-                        }
-                      }}
-                      className="whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed max-h-40 overflow-y-auto select-text opacity-90"
-                    >
-                      {entry.body}
-                      {entry.status === 'running' ? '▌' : ''}
-                    </pre>
+                    <span className="font-medium">
+                      {msg.sender === 'user'
+                        ? lang === 'zh'
+                          ? '你'
+                          : 'You'
+                        : msg.sender === 'ai'
+                        ? 'Vibe'
+                        : lang === 'zh'
+                          ? '系统'
+                          : 'System'}
+                    </span>
+                    <span className="opacity-70">{msg.timestamp}</span>
                   </div>
-                ))}
+                  {msg.sender === 'ai' ? (
+                    <MarkdownView text={body} />
+                  ) : (
+                    <div className="select-text whitespace-pre-wrap">{body}</div>
+                  )}
+                </div>
               </div>
+            );
+          })}
+
+          {isSending && (
+            <div className={`flex items-center gap-2 text-xs px-1 ${themeConfig.textMuted}`}>
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+              <span>{lang === 'zh' ? '正在思考…' : 'Thinking…'}</span>
+              <button
+                type="button"
+                className="underline text-indigo-500"
+                onClick={() => abortRef.current?.abort()}
+              >
+                {t.cancel}
+              </button>
             </div>
           )}
+          {chatError && !pendingLlm && (
+            <div className="text-xs text-rose-500 px-1 select-text">{chatError}</div>
+          )}
+          <LLMRecoveryBar
+            session={pendingLlm || null}
+            lang={lang}
+            themeStyle={themeStyle}
+            busy={isSending}
+            onRetrySession={() => onRetrySession?.()}
+            onRegenerate={() => onRegenerate?.()}
+          />
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Process rail: one active entry, list of others as compact rows */}
+        {modelProcess.expanded && modelProcess.entries.length > 0 && (
+          <aside
+            className={`w-[min(320px,40%)] shrink-0 border-l flex flex-col min-h-0 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}
+          >
+            <div className={`px-3 py-2.5 border-b flex items-center justify-between gap-2 ${themeConfig.subtleBorder}`}>
+              <div className={`flex items-center gap-1.5 text-[11px] font-semibold ${themeConfig.textPrimary}`}>
+                <Eye className="w-3.5 h-3.5 text-indigo-500" />
+                {lang === 'zh' ? '模型过程' : 'Process'}
+              </div>
+              <button
+                type="button"
+                onClick={closeProcessRail}
+                className={`p-1 rounded-md ${themeConfig.textMuted} hover:opacity-80`}
+                title={lang === 'zh' ? '收起' : 'Close'}
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            <div className={`border-b max-h-[30%] overflow-y-auto ${themeConfig.subtleBorder}`}>
+              {[...modelProcess.entries].reverse().map((entry) => {
+                const selected = entry.id === activeEntry?.id;
+                return (
+                  <button
+                    key={entry.id}
+                    type="button"
+                    onClick={() => openProcessRail(entry.id)}
+                    className={`w-full text-left px-3 py-2 flex items-start gap-2 text-[11px] border-b last:border-b-0 transition-colors ${themeConfig.subtleBorder} ${
+                      selected ? 'bg-indigo-500/10' : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
+                    }`}
+                  >
+                    <ChevronRight
+                      className={`w-3 h-3 mt-0.5 shrink-0 transition-transform ${selected ? 'rotate-90 text-indigo-500' : themeConfig.textMuted}`}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className={`font-mono text-[10px] ${themeConfig.textMuted}`}>{entry.at}</span>
+                        <span
+                          className={
+                            entry.status === 'running'
+                              ? 'text-indigo-500'
+                              : entry.status === 'error'
+                              ? 'text-rose-500'
+                              : 'text-emerald-600'
+                          }
+                        >
+                          {entry.status === 'running'
+                            ? t.processStreaming
+                            : entry.status === 'error'
+                            ? t.processError
+                            : t.processDone}
+                        </span>
+                      </div>
+                      <div className={`truncate mt-0.5 ${themeConfig.textSecondary}`} title={entry.prompt}>
+                        {entry.prompt}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {activeEntry && (
+              <div className="flex-1 min-h-0 overflow-y-auto px-3 py-3">
+                <pre
+                  ref={(el) => {
+                    if (el && activeEntry.status === 'running') {
+                      el.scrollTop = el.scrollHeight;
+                    }
+                  }}
+                  className={`whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed select-text ${themeConfig.textSecondary}`}
+                >
+                  {processBodyPreview(activeEntry.body, lang)}
+                  {activeEntry.status === 'running' ? '▌' : ''}
+                </pre>
+              </div>
+            )}
+          </aside>
+        )}
+      </div>
+
+      {/* Compact status strip (like Cursor thinking bar) */}
+      {modelProcess.entries.length > 0 && (
+        <div
+          className={`shrink-0 border-t px-3 py-1.5 flex items-center justify-between gap-2 text-[11px] ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}
+        >
           <button
             type="button"
             onClick={() =>
-              setModelProcess((prev) => ({ ...prev, expanded: !prev.expanded }))
+              modelProcess.expanded ? closeProcessRail() : openProcessRail(latestEntry?.id)
             }
-            className={`w-full px-4 py-2 flex items-center justify-between gap-2 text-[11px] ${themeConfig.textSecondary}`}
+            className={`flex items-center gap-1.5 min-w-0 ${themeConfig.textSecondary}`}
           >
-            <span className="flex items-center gap-1.5 font-semibold min-w-0">
-              <Eye className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-              <span className="truncate">
-                {lang === 'zh' ? '模型过程' : 'Model process'}
-                <span className={`ml-1.5 font-normal ${themeConfig.textMuted}`}>
-                  ({modelProcess.entries.length}
-                  {lang === 'zh' ? '，仅本会话' : ', session only'})
-                </span>
-              </span>
-              {modelProcess.entries.some((e) => e.status === 'running') && (
-                <Loader2 className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />
-              )}
-            </span>
-            <span className="flex items-center gap-1 shrink-0 text-[10px] font-medium">
-              <span className={themeConfig.textMuted}>
-                {modelProcess.expanded
+            <Eye className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+            {latestEntry?.status === 'running' && (
+              <Loader2 className="w-3 h-3 animate-spin text-indigo-500 shrink-0" />
+            )}
+            <span className="truncate">
+              {modelProcess.expanded
+                ? lang === 'zh'
+                  ? '收起过程面板'
+                  : 'Hide process'
+                : latestEntry?.status === 'running'
                   ? lang === 'zh'
-                    ? '收起'
-                    : 'Hide'
+                    ? '查看模型过程…'
+                    : 'View model process…'
                   : lang === 'zh'
-                    ? '查看'
-                    : 'Show'}
-              </span>
-              {modelProcess.expanded ? (
-                <ChevronDown className="w-3.5 h-3.5" />
-              ) : (
-                <ChevronUp className="w-3.5 h-3.5" />
-              )}
+                    ? `模型过程 · ${modelProcess.entries.length} 条`
+                    : `Process · ${modelProcess.entries.length}`}
             </span>
           </button>
+          {!modelProcess.expanded && latestEntry && (
+            <span
+              className={`shrink-0 text-[10px] ${
+                latestEntry.status === 'running'
+                  ? 'text-indigo-500'
+                  : latestEntry.status === 'error'
+                  ? 'text-rose-500'
+                  : 'text-emerald-600'
+              }`}
+            >
+              {latestEntry.status === 'running'
+                ? t.processStreaming
+                : latestEntry.status === 'error'
+                ? t.processError
+                : t.processDone}
+            </span>
+          )}
         </div>
       )}
 
-      {/* Chat Input */}
-      <div className={`p-4 border-t space-y-3 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 text-[11px]">
-          <span className={`text-[10px] uppercase font-semibold shrink-0 ${themeConfig.textMuted}`}>
-            {splitIssue
-              ? selectedScope === 'all'
-                ? t.chatUpdatesAll
-                : t.chatUpdatesSub
-              : lang === 'zh'
-              ? '闲聊只分析；改设计请点「修订开发设计」或直接说「更新开发设计」'
-              : 'Chat is analysis only — use “Revise design” or say “update Dev Spec”'}
-          </span>
+      {/* Composer */}
+      <div className={`shrink-0 p-3 sm:p-4 border-t space-y-2.5 ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
+        <div className="flex items-center gap-2 overflow-x-auto text-[11px]">
           <button
             onClick={() =>
               handleSendMessage(
@@ -294,7 +414,7 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             }
             className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
           >
-            🛡️ {lang === 'zh' ? '澄清验收与边界' : 'Clarify acceptance'}
+            {lang === 'zh' ? '澄清验收与边界' : 'Clarify acceptance'}
           </button>
           <button
             onClick={() =>
@@ -307,7 +427,7 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             }
             className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
           >
-            📄 {t.extractReqBtn}
+            {t.extractReqBtn}
           </button>
           {canDesign && (
             <button
@@ -326,22 +446,8 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
                 void handleSendMessage(custom, { forceSpecSync: true });
               }}
               className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText} disabled:opacity-50`}
-              title={
-                lang === 'zh'
-                  ? '会读取源码摘要并覆盖更新「开发设计」页文档'
-                  : 'Reads source excerpts and overwrites the Dev Spec document'
-              }
             >
-              <span className="inline-flex items-center gap-1">
-                <FileText className="w-3 h-3" />
-                {lang === 'zh'
-                  ? hasDesign
-                    ? '修订开发设计'
-                    : '生成开发设计'
-                  : hasDesign
-                    ? 'Revise design'
-                    : 'Generate design'}
-              </span>
+              {lang === 'zh' ? (hasDesign ? '修订开发设计' : '生成开发设计') : hasDesign ? 'Revise design' : 'Generate design'}
             </button>
           )}
         </div>
@@ -355,18 +461,18 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             placeholder={
               lang === 'zh'
                 ? canDesign
-                  ? '讨论点直接发；若要写回设计，说「更新开发设计」或点「修订开发设计」…'
-                  : '输入问题或讨论点（不会自动改文档）…'
+                  ? '输入讨论点；写回设计请说「更新开发设计」…'
+                  : '输入问题或讨论点…'
                 : canDesign
-                  ? 'Discuss freely; to write the design say “update Dev Spec” or tap Revise…'
-                  : 'Ask or discuss (will not auto-update documents)…'
+                  ? 'Discuss; say “update Dev Spec” to write the design…'
+                  : 'Ask or discuss…'
             }
-            className={`flex-1 px-4 py-2.5 border rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+            className={`flex-1 px-3.5 py-2.5 border rounded-xl text-[13px] focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
           />
           <button
             onClick={() => handleSendMessage()}
             disabled={isSending || !inputPrompt.trim()}
-            className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all shrink-0"
+            className="px-3.5 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all shrink-0"
           >
             <Send className="w-3.5 h-3.5" />
             {lang === 'zh' ? '发送' : 'Send'}

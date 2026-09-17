@@ -9,6 +9,8 @@ import { coerceReqMarkdown, coerceDocMarkdown } from '../../lib/subreq';
 export type ModelProcessState = {
   entries: { id: string; at: string; prompt: string; body: string; status: 'running' | 'done' | 'error' }[];
   expanded: boolean;
+  /** Which process entry is open in the side rail (one at a time). */
+  activeId?: string;
 };
 
 export type SendMessageOpts = {
@@ -94,7 +96,11 @@ export function useIssueChat(params: {
   const [chatError, setChatError] = useState('');
   const [pendingLlm, setPendingLlm] = useState<PendingLLMSession | null>(issue.pendingLlm || null);
   /** Ephemeral model process traces — session only, never persisted. */
-  const [modelProcess, setModelProcess] = useState<ModelProcessState>({ entries: [], expanded: false });
+  const [modelProcess, setModelProcess] = useState<ModelProcessState>({
+    entries: [],
+    expanded: false,
+    activeId: undefined,
+  });
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -168,6 +174,7 @@ export function useIssueChat(params: {
     const processAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     setModelProcess((prev) => ({
       expanded: true,
+      activeId: processId,
       entries: [
         ...prev.entries.slice(-7),
         {
@@ -182,8 +189,9 @@ export function useIssueChat(params: {
 
     const patchProcess = (body: string, status?: 'running' | 'done' | 'error') => {
       setModelProcess((prev) => ({
-        // Keep open while streaming; auto-collapse when finished so chat stays usable.
+        // Keep the side rail open while streaming; collapse when finished.
         expanded: status === 'running' ? true : status ? false : prev.expanded,
+        activeId: processId,
         entries: prev.entries.map((e) =>
           e.id === processId ? { ...e, body, ...(status ? { status } : {}) } : e
         ),
@@ -273,7 +281,7 @@ export function useIssueChat(params: {
               result = await api.generateSpecStream(issue.id, body, streamOpts);
             }
             const { spec, reqDoc, text, chatReply, process, subRequirements, docPhase } = result;
-            const reply =
+            const rawReply =
               chatReply ||
               text ||
               (syncReqDoc
@@ -283,6 +291,32 @@ export function useIssueChat(params: {
                 : lang === 'zh'
                   ? '已更新开发设计文档。'
                   : 'Dev Spec updated.');
+            // Never persist the full JSON envelope into the chat transcript.
+            let reply = rawReply;
+            const trimmed = (rawReply || '').trim();
+            if (trimmed.startsWith('{') && (trimmed.includes('"chatReply"') || trimmed.includes('"rawMarkdown"'))) {
+              try {
+                const parsed = JSON.parse(trimmed) as { chatReply?: string };
+                if (parsed.chatReply?.trim()) reply = parsed.chatReply.trim();
+                else {
+                  reply = syncReqDoc
+                    ? lang === 'zh'
+                      ? '已更新需求文档。'
+                      : 'Requirement document updated.'
+                    : lang === 'zh'
+                      ? '已更新开发设计文档。'
+                      : 'Dev Spec updated.';
+                }
+              } catch {
+                reply = syncReqDoc
+                  ? lang === 'zh'
+                    ? '已更新需求文档。'
+                    : 'Requirement document updated.'
+                  : lang === 'zh'
+                    ? '已更新开发设计文档。'
+                    : 'Dev Spec updated.';
+              }
+            }
             patchProcess(process || streamed || text || reply, 'done');
             const aiMsg: ChatMessage = {
               id: `msg-${Date.now() + 1}`,
