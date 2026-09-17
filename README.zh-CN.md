@@ -10,11 +10,11 @@
 
 | 模式 | 构建命令 | 得到什么 | 适用场景 |
 |------|----------|----------|----------|
-| **桌面版 Desktop** | `make build` | 原生窗口（Wails + 系统 WebView），同时监听 `http://127.0.0.1:8090` 供浏览器打开 | macOS / Windows / Linux 上的日常本地图形界面 |
-| **服务版 Server** | `make build-server` | 仅 HTTP 进程（默认 `http://127.0.0.1:8090`），可选 `--open` 打开系统浏览器 | 无界面 / Docker / CI，或只需要 HTTP API 的调用方（例如未来的 OpenAPI 客户端） |
+| **服务版（浏览器）** | `make build-server` → `./vibecoding-server` | 仅 HTTP（默认 `http://127.0.0.1:8090`），**不启动桌面窗口**。日常推荐 `make serve` | 用系统浏览器使用、Docker、CI、只要 API |
+| **桌面版** | `make build` → `./vibecoding` | 原生窗口（Wails + 系统 WebView），同时也会监听 `:8090` | 偏好原生应用窗口 |
 
-两种模式默认都把数据写入 `~/.vibecoding/`（SQLite + 配置）。
-**注意：** `make build` 与 `make build-server` 都会输出名为 `./vibecoding` 的文件，重新构建其中一种会覆盖另一种；切换模式时请重新构建。
+两种模式默认都把数据写入 `~/.vibecoding/`（SQLite + 配置）。  
+桌面版与服务版**文件名不同**，互相构建不会覆盖。
 
 ---
 
@@ -66,7 +66,33 @@ Linux 运行时依赖（终端用户，非 `-dev`）：
 
 ## 快速开始
 
-### 1）桌面版（图形界面）
+### 1）仅服务版（浏览器 — 不启动桌面 App）
+
+```bash
+make serve           # 构建 HTTP 二进制 → ./vibecoding-server，监听 :8090，并打开浏览器
+# 或不自动打开浏览器：
+make serve-bg        # 然后自行打开 http://127.0.0.1:8090
+```
+
+完整重建前端 + 服务版：
+
+```bash
+make build-server
+./vibecoding-server          # 仅监听
+./vibecoding-server --open   # 监听并打开浏览器
+# 或：make run-server
+```
+
+不使用 Make：
+
+```bash
+cd web && npm install && npm run build && cd ..
+make sync-web
+CGO_ENABLED=0 go build -tags server -o vibecoding-server ./cmd/vibecoding
+./vibecoding-server --open
+```
+
+### 2）桌面版（原生窗口）
 
 ```bash
 make doctor          # 一次性：校验 Wails / WebView 工具链
@@ -84,33 +110,19 @@ CGO_ENABLED=1 go build -tags "desktop,production" -o vibecoding .
 ./vibecoding
 ```
 
-### 2）服务版（HTTP / API）
-
-```bash
-make build-server    # 构建前端 + 服务二进制 → ./vibecoding
-./vibecoding         # 监听 http://127.0.0.1:8090（不打开浏览器）
-./vibecoding --open  # 同上，并打开系统浏览器
-# 或：make run-server
-```
-
-之后可以选择：
-
-- 在浏览器打开 `http://127.0.0.1:8090` 使用看板 UI，或
-- 从脚本 / 未来的 OpenAPI 客户端调用 `http://127.0.0.1:8090/api/...`（无需界面）
-
-健康检查：
+健康检查（任一模式在 :8090 监听时）：
 
 ```bash
 curl -s http://127.0.0.1:8090/api/health
 ```
 
-### 命令行参数（桌面版与服务版均适用；桌面版会额外打开原生窗口）
+### 命令行参数（桌面版与服务版）
 
 | 参数 | 默认值 | 适用模式 | 说明 |
 |------|--------|----------|------|
-| `--addr` | `127.0.0.1:8090` | 两者 | HTTP 监听地址（桌面版同时提供浏览器入口） |
+| `--addr` | `127.0.0.1:8090` | 两者 | HTTP 监听地址 |
 | `--data-dir` | `~/.vibecoding` | 两者 | SQLite / 配置目录 |
-| `--open` | `false` | **服务版** | 启动后打开系统浏览器访问 `--addr` |
+| `--open` | `false` | **服务版**（`vibecoding-server`） | 启动后打开系统浏览器访问 `--addr` |
 | `--log-level` | `info` | 两者 | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | 两者 | `text` / `json` |
 | `--log-output` | `stdout` | 两者 | `stdout` / `stderr` / `discard` / 文件路径 |
@@ -132,8 +144,8 @@ make dev-desktop  # wails dev —— Go 与前端在原生窗口中热重载
 ### 服务版 + Vite（用浏览器对接本地 API）
 
 ```bash
-# 终端 1 —— API（服务版二进制）
-make backend && ./vibecoding
+# 终端 1 —— API（服务版二进制，无桌面窗口）
+make backend && ./vibecoding-server
 
 # 终端 2 —— Vite 跑在 :3000，代理 /api → :8090
 make dev

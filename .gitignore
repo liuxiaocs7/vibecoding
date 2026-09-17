@@ -1,6 +1,8 @@
 # Go binary / build artifacts
 /vibecoding
+/vibecoding-server
 /vibecoding.exe
+/vibecoding-server.exe
 /bin/
 *.exe
 *.test

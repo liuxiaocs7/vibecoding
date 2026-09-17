@@ -10,11 +10,11 @@ There are **two separate binaries / build targets**. They share the same data di
 
 | Mode | Command to build | What you get | Use when |
 |------|------------------|--------------|----------|
-| **Desktop** | `make build` | Native window (Wails + OS WebView), and also listens on `http://127.0.0.1:8090` for the system browser | Everyday local GUI on macOS / Windows / Linux |
-| **Server** | `make build-server` | HTTP process only (default `http://127.0.0.1:8090`). Optional `--open` opens the system browser. | Headless / Docker / CI, or callers that only need the HTTP API (e.g. future OpenAPI clients) |
+| **Server (browser)** | `make build-server` → `./vibecoding-server` | HTTP only on `http://127.0.0.1:8090` — **no desktop window**. Prefer `make serve`. | Daily use in the system browser, Docker, CI, API-only |
+| **Desktop** | `make build` → `./vibecoding` | Native window (Wails + OS WebView); also listens on `:8090` | Prefer a native app window |
 
 Both modes write to `~/.vibecoding/` by default (SQLite + settings).  
-**Important:** `make build` and `make build-server` both output a file named `./vibecoding`. Rebuilding one mode overwrites the other; rebuild when you switch.
+Desktop and server binaries have **different names**, so building one does not overwrite the other.
 
 ---
 
@@ -66,7 +66,33 @@ No WebView / CGO. A browser is optional — only if you pass `--open` or open th
 
 ## Quick start
 
-### 1) Desktop (GUI)
+### 1) Server only (browser — no desktop app)
+
+```bash
+make serve           # build HTTP binary → ./vibecoding-server, listen on :8090, open browser
+# or without auto-open:
+make serve-bg        # then open http://127.0.0.1:8090 yourself
+```
+
+Full rebuild of frontend + server:
+
+```bash
+make build-server
+./vibecoding-server          # listen only
+./vibecoding-server --open   # listen + open browser
+# or: make run-server
+```
+
+Without Make:
+
+```bash
+cd web && npm install && npm run build && cd ..
+make sync-web
+CGO_ENABLED=0 go build -tags server -o vibecoding-server ./cmd/vibecoding
+./vibecoding-server --open
+```
+
+### 2) Desktop (native window)
 
 ```bash
 make doctor          # once: verify Wails / WebView toolchain
@@ -84,33 +110,19 @@ CGO_ENABLED=1 go build -tags "desktop,production" -o vibecoding .
 ./vibecoding
 ```
 
-### 2) Server (HTTP / API)
-
-```bash
-make build-server    # frontend + server binary → ./vibecoding
-./vibecoding         # listen on http://127.0.0.1:8090 (no browser)
-./vibecoding --open  # same, then open the system browser
-# or: make run-server
-```
-
-Then either:
-
-- Open `http://127.0.0.1:8090` in a browser for the Kanban UI, or
-- Call `http://127.0.0.1:8090/api/...` from scripts / future OpenAPI clients (no UI required)
-
-Health check:
+Health check (either mode listening on :8090):
 
 ```bash
 curl -s http://127.0.0.1:8090/api/health
 ```
 
-### Flags (desktop and server; desktop also opens a native window)
+### Flags (desktop and server)
 
 | Flag | Default | Applies to | Description |
 |------|---------|------------|-------------|
-| `--addr` | `127.0.0.1:8090` | Both | HTTP listen address (desktop also exposes this for browsers) |
+| `--addr` | `127.0.0.1:8090` | Both | HTTP listen address |
 | `--data-dir` | `~/.vibecoding` | Both | SQLite / config directory |
-| `--open` | `false` | **Server** | After start, open the system browser to `--addr` |
+| `--open` | `false` | **Server** (`vibecoding-server`) | After start, open the system browser to `--addr` |
 | `--log-level` | `info` | Both | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | Both | `text` / `json` |
 | `--log-output` | `stdout` | Both | `stdout` / `stderr` / `discard` / path to file |
@@ -132,8 +144,8 @@ make dev-desktop  # wails dev — Go + frontend hot reload in a native window
 ### Server + Vite (browser against local API)
 
 ```bash
-# Terminal 1 — API (server binary)
-make backend && ./vibecoding
+# Terminal 1 — API (server binary, no desktop window)
+make backend && ./vibecoding-server
 
 # Terminal 2 — Vite on :3000, proxies /api → :8090
 make dev

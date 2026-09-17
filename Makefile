@@ -1,6 +1,7 @@
-.PHONY: all web sync-web build build-server backend run run-server dev doctor dev-desktop wails-build clean release
+.PHONY: all web sync-web build build-server backend run run-server serve serve-bg doctor dev-desktop wails-build clean release
 
-BINARY := vibecoding
+BINARY_DESKTOP := vibecoding
+BINARY_SERVER := vibecoding-server
 
 # Wails on modern macOS/Xcode needs UniformTypeIdentifiers at link time.
 ifeq ($(shell go env GOOS),darwin)
@@ -40,30 +41,41 @@ sync-web:
 # Desktop binary (Wails + CGO). Requires platform WebView deps; see README.
 # Wails requires the `production` (or `dev`) tag in addition to our `desktop` entry tag.
 build: web
-	CGO_ENABLED=1 go build -tags "desktop,production" -o $(BINARY) .
+	CGO_ENABLED=1 go build -tags "desktop,production" -o $(BINARY_DESKTOP) .
 
-# Headless HTTP server (no WebView). Safe for Docker / CI.
+# Headless HTTP server (no WebView / no desktop window). Safe for Docker / CI.
+# Output is ./vibecoding-server so it does not overwrite the desktop binary.
 build-server: web
-	CGO_ENABLED=0 go build -tags server -o $(BINARY) ./cmd/vibecoding
+	CGO_ENABLED=0 go build -tags server -o $(BINARY_SERVER) ./cmd/vibecoding
 
-# Rebuild server using whatever is already in cmd/vibecoding/dist.
+# Rebuild server using whatever is already in cmd/vibecoding/dist (fast iterate).
 backend: sync-web
-	CGO_ENABLED=0 go build -tags server -o $(BINARY) ./cmd/vibecoding
+	CGO_ENABLED=0 go build -tags server -o $(BINARY_SERVER) ./cmd/vibecoding
 
 # Run desktop app (rebuilds first).
 run: build
-	./$(BINARY)
+	./$(BINARY_DESKTOP)
 
-# Run HTTP server and open the system browser.
+# Browser-only: rebuild frontend + server, start HTTP, open system browser.
+# Does NOT launch the Wails desktop window.
 run-server: build-server
-	./$(BINARY) --open
+	./$(BINARY_SERVER) --open
+
+# Same as run-server but skips a full npm web rebuild when dist already exists.
+# Preferred daily entry for "backend + browser, no desktop app".
+serve: backend
+	./$(BINARY_SERVER) --open
+
+# Start HTTP only (no auto-open). Open http://127.0.0.1:8090 yourself.
+serve-bg: backend
+	./$(BINARY_SERVER)
 
 # Frontend Vite dev server proxied to a separately-run backend on :8090.
 dev:
 	cd web && npm run dev
 
 clean:
-	rm -f $(BINARY)
+	rm -f $(BINARY_DESKTOP) $(BINARY_SERVER)
 	rm -rf web/dist
 	rm -rf build/bin
 	rm -rf dist/release
