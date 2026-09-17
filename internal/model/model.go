@@ -2,6 +2,8 @@ package model
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -123,8 +125,31 @@ type SpecFileChange struct {
 	RepoName     string `json:"repoName"`
 	Action       string `json:"action"` // create | modify | delete
 	Summary      string `json:"summary"`
+	Symbol       string `json:"symbol,omitempty"`
+	Verified     bool   `json:"verified,omitempty"`
 	OriginalCode string `json:"originalCode,omitempty"`
 	ModifiedCode string `json:"modifiedCode,omitempty"`
+}
+
+// DocPhase selects which document chat/actions default to writing.
+type DocPhase string
+
+const (
+	DocPhaseRequirement DocPhase = "requirement"
+	DocPhaseDesign      DocPhase = "design"
+)
+
+// ReqDoc is the product requirement document (what to build), separate from DevSpec.
+type ReqDoc struct {
+	Title       string `json:"title,omitempty"`
+	Summary     string `json:"summary,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	NonGoals    string `json:"nonGoals,omitempty"`
+	Acceptance  string `json:"acceptance,omitempty"`
+	Constraints string `json:"constraints,omitempty"`
+	RawMarkdown string `json:"rawMarkdown"`
+	AcceptedAt  string `json:"acceptedAt,omitempty"`
+	UpdatedAt   string `json:"updatedAt,omitempty"`
 }
 
 type DevSpec struct {
@@ -311,6 +336,8 @@ type Issue struct {
 	AssociatedRepoIDs []string           `json:"associatedRepoIds"`
 	Assignee          string             `json:"assignee"`
 	ChatMessages      []ChatMessage      `json:"chatMessages"`
+	ReqDoc            *ReqDoc            `json:"reqDoc,omitempty"`
+	DocPhase          DocPhase           `json:"docPhase,omitempty"`
 	DevSpec           *DevSpec           `json:"devSpec,omitempty"`
 	SubRequirements   []SubRequirement   `json:"subRequirements,omitempty"`
 	CurrentSubID      string             `json:"currentSubId,omitempty"`
@@ -367,10 +394,18 @@ func (iss *Issue) PromptDescription() string {
 	return b.String()
 }
 
-// SpecReadyForDev reports whether Auto-Dev / backlog can proceed.
-// A split issue needs every sub-requirement to have a Markdown Dev Spec;
-// an unsplit issue needs the parent Dev Spec.
-func (iss *Issue) SpecReadyForDev() bool {
+// HasReqDoc reports whether a non-empty requirement document exists.
+func (iss *Issue) HasReqDoc() bool {
+	return iss != nil && iss.ReqDoc != nil && strings.TrimSpace(iss.ReqDoc.RawMarkdown) != ""
+}
+
+// LegacySpecOnly is true for older issues that have a Dev Spec but never got a ReqDoc.
+// Those stay usable without the new requirement/design gate.
+func (iss *Issue) LegacySpecOnly() bool {
+	return iss != nil && !iss.HasReqDoc() && iss.hasDevSpecMarkdown()
+}
+
+func (iss *Issue) hasDevSpecMarkdown() bool {
 	if iss == nil {
 		return false
 	}
@@ -380,9 +415,198 @@ func (iss *Issue) SpecReadyForDev() bool {
 				return false
 			}
 		}
-		return true
+		return len(iss.SubRequirements) > 0
 	}
 	return iss.DevSpec != nil && strings.TrimSpace(iss.DevSpec.RawMarkdown) != ""
+}
+
+func (iss *Issue) hasNonEmptyFileChanges() bool {
+	if iss == nil {
+		return false
+	}
+	if iss.HasSubRequirements() {
+		for _, sub := range iss.SubRequirements {
+			if sub.DevSpec == nil || len(sub.DevSpec.FileChanges) == 0 {
+				return false
+			}
+		}
+		return len(iss.SubRequirements) > 0
+	}
+	return iss.DevSpec != nil && len(iss.DevSpec.FileChanges) > 0
+}
+
+// RequirementAccepted reports whether the requirement doc is confirmed
+// (or this is a legacy issue that only has a Dev Spec).
+func (iss *Issue) RequirementAccepted() bool {
+	if iss == nil {
+		return false
+	}
+	if !iss.HasReqDoc() {
+		return iss.hasDevSpecMarkdown()
+	}
+	if strings.TrimSpace(iss.ReqDoc.AcceptedAt) == "" {
+		return false
+	}
+	// Unconfirmed edits after accept: UpdatedAt is later than AcceptedAt.
+	if strings.TrimSpace(iss.ReqDoc.UpdatedAt) != "" &&
+		iss.ReqDoc.UpdatedAt > iss.ReqDoc.AcceptedAt {
+		return false
+	}
+	return true
+}
+
+// DesignStale is true when the requirement was edited after the Dev Spec was written.
+// Legacy issues (no ReqDoc) are never considered stale.
+func (iss *Issue) DesignStale() bool {
+	if iss == nil || !iss.HasReqDoc() {
+		return false
+	}
+	reqTouch := strings.TrimSpace(iss.ReqDoc.UpdatedAt)
+	if reqTouch == "" {
+		return false
+	}
+	if iss.HasSubRequirements() {
+		for _, sub := range iss.SubRequirements {
+			if sub.DevSpec == nil {
+				continue
+			}
+			if strings.TrimSpace(sub.DevSpec.UpdatedAt) != "" && reqTouch > sub.DevSpec.UpdatedAt {
+				return true
+			}
+			if strings.TrimSpace(sub.DevSpec.UpdatedAt) == "" && strings.TrimSpace(sub.DevSpec.RawMarkdown) != "" {
+				return true
+			}
+		}
+		return false
+	}
+	if iss.DevSpec == nil || strings.TrimSpace(iss.DevSpec.RawMarkdown) == "" {
+		return false
+	}
+	if strings.TrimSpace(iss.DevSpec.UpdatedAt) == "" {
+		return true
+	}
+	return reqTouch > iss.DevSpec.UpdatedAt
+}
+
+// AcceptRequirement marks the current ReqDoc as confirmed.
+func (iss *Issue) AcceptRequirement() {
+	if iss == nil || iss.ReqDoc == nil {
+		return
+	}
+	now := NowISO()
+	if strings.TrimSpace(iss.ReqDoc.UpdatedAt) == "" {
+		iss.ReqDoc.UpdatedAt = now
+	}
+	iss.ReqDoc.AcceptedAt = now
+	if iss.ReqDoc.UpdatedAt > iss.ReqDoc.AcceptedAt {
+		iss.ReqDoc.AcceptedAt = iss.ReqDoc.UpdatedAt
+	}
+	iss.DocPhase = DocPhaseDesign
+}
+
+// TouchReqDoc sets UpdatedAt and clears acceptance when the requirement body changes.
+func (iss *Issue) TouchReqDoc() {
+	if iss == nil || iss.ReqDoc == nil {
+		return
+	}
+	iss.ReqDoc.UpdatedAt = NowISO()
+	iss.DocPhase = DocPhaseRequirement
+}
+
+// SpecReadyForDev reports whether Auto-Dev / backlog can proceed.
+// Legacy (Dev Spec only): markdown present.
+// New flow: accepted ReqDoc, non-stale design, markdown, and non-empty fileChanges.
+func (iss *Issue) SpecReadyForDev() bool {
+	if iss == nil {
+		return false
+	}
+	if !iss.hasDevSpecMarkdown() {
+		return false
+	}
+	if iss.LegacySpecOnly() {
+		return true
+	}
+	if !iss.RequirementAccepted() || iss.DesignStale() {
+		return false
+	}
+	return iss.hasNonEmptyFileChanges()
+}
+
+// HasUnverifiedModifies is true when any modify/delete change is not verified against disk.
+// Create actions are allowed without an existing file; UI may warn but server does not hard-block.
+func (iss *Issue) HasUnverifiedModifies() bool {
+	for _, ch := range iss.AggregatedFileChanges() {
+		action := strings.ToLower(strings.TrimSpace(ch.Action))
+		if action == "create" || action == "" {
+			continue
+		}
+		if !ch.Verified {
+			return true
+		}
+	}
+	return false
+}
+
+// FileExistsInRepos reports whether rel path exists under any associated repo root.
+// repoRoots maps repoName → absolute path on disk.
+func FileExistsInRepos(repoRoots map[string]string, repoName, filePath string) bool {
+	filePath = filepath.Clean(strings.TrimSpace(filePath))
+	if filePath == "" || filePath == "." || strings.HasPrefix(filePath, "..") {
+		return false
+	}
+	if repoName != "" {
+		if root, ok := repoRoots[repoName]; ok {
+			return fileExistsUnder(root, filePath)
+		}
+		return false
+	}
+	for _, root := range repoRoots {
+		if fileExistsUnder(root, filePath) {
+			return true
+		}
+	}
+	return false
+}
+
+func fileExistsUnder(root, rel string) bool {
+	full := filepath.Join(root, rel)
+	st, err := os.Stat(full)
+	return err == nil && !st.IsDir()
+}
+
+// VerifyFileChanges sets Verified on each change:
+// - create: verified if path is non-empty and repoName is known (file need not exist)
+// - modify/delete: verified only if the file exists under the named repo
+func VerifyFileChanges(changes []SpecFileChange, repoRoots map[string]string) []SpecFileChange {
+	out := make([]SpecFileChange, len(changes))
+	copy(out, changes)
+	for i := range out {
+		path := strings.TrimSpace(out[i].FilePath)
+		repo := strings.TrimSpace(out[i].RepoName)
+		action := strings.ToLower(strings.TrimSpace(out[i].Action))
+		if path == "" {
+			out[i].Verified = false
+			continue
+		}
+		clean := filepath.Clean(path)
+		if clean == "." || strings.HasPrefix(clean, "..") || filepath.IsAbs(clean) {
+			out[i].Verified = false
+			continue
+		}
+		switch action {
+		case "create":
+			if repo == "" {
+				out[i].Verified = len(repoRoots) == 1
+			} else if _, ok := repoRoots[repo]; ok {
+				out[i].Verified = true
+			} else {
+				out[i].Verified = false
+			}
+		default: // modify, delete, unknown
+			out[i].Verified = FileExistsInRepos(repoRoots, repo, clean)
+		}
+	}
+	return out
 }
 
 func (iss *Issue) NormalizeSubs() {

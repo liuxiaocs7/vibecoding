@@ -81,8 +81,14 @@ func validateStatusTransition(old, neu *model.Issue) error {
 	}
 	switch neu.Status {
 	case model.StatusBacklog:
+		if !neu.RequirementAccepted() {
+			return fmt.Errorf("cannot move to backlog without an accepted requirement document")
+		}
+		if neu.DesignStale() {
+			return fmt.Errorf("cannot move to backlog: design is stale after requirement changes; regenerate Dev Spec")
+		}
 		if !neu.SpecReadyForDev() {
-			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec (all sub-requirements need specs when split)")
+			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec with file changes (all sub-requirements need specs when split)")
 		}
 		if len(neu.AssociatedRepoIDs) == 0 {
 			return fmt.Errorf("cannot move to backlog without associated repositories")

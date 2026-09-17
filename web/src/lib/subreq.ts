@@ -4,11 +4,73 @@ export function hasSubRequirements(issue: Issue): boolean {
   return (issue.subRequirements?.length ?? 0) > 0;
 }
 
-export function specReadyForDev(issue: Issue): boolean {
+function hasDevSpecMarkdown(issue: Issue): boolean {
   if (hasSubRequirements(issue)) {
-    return (issue.subRequirements || []).every((s) => !!s.devSpec?.rawMarkdown?.trim());
+    const list = issue.subRequirements || [];
+    return list.length > 0 && list.every((s) => !!s.devSpec?.rawMarkdown?.trim());
   }
   return !!issue.devSpec?.rawMarkdown?.trim();
+}
+
+function hasNonEmptyFileChanges(issue: Issue): boolean {
+  if (hasSubRequirements(issue)) {
+    const list = issue.subRequirements || [];
+    return list.length > 0 && list.every((s) => (s.devSpec?.fileChanges?.length ?? 0) > 0);
+  }
+  return (issue.devSpec?.fileChanges?.length ?? 0) > 0;
+}
+
+export function hasReqDoc(issue: Issue): boolean {
+  return !!issue.reqDoc?.rawMarkdown?.trim();
+}
+
+export function legacySpecOnly(issue: Issue): boolean {
+  return !hasReqDoc(issue) && hasDevSpecMarkdown(issue);
+}
+
+export function requirementAccepted(issue: Issue): boolean {
+  if (!hasReqDoc(issue)) {
+    return hasDevSpecMarkdown(issue);
+  }
+  const acceptedAt = issue.reqDoc?.acceptedAt?.trim();
+  if (!acceptedAt) return false;
+  const updatedAt = issue.reqDoc?.updatedAt?.trim();
+  if (updatedAt && updatedAt > acceptedAt) return false;
+  return true;
+}
+
+export function designStale(issue: Issue): boolean {
+  if (!hasReqDoc(issue)) return false;
+  const reqTouch = issue.reqDoc?.updatedAt?.trim();
+  if (!reqTouch) return false;
+  if (hasSubRequirements(issue)) {
+    for (const sub of issue.subRequirements || []) {
+      if (!sub.devSpec) continue;
+      const u = sub.devSpec.updatedAt?.trim();
+      if (u && reqTouch > u) return true;
+      if (!u && sub.devSpec.rawMarkdown?.trim()) return true;
+    }
+    return false;
+  }
+  if (!issue.devSpec?.rawMarkdown?.trim()) return false;
+  const u = issue.devSpec.updatedAt?.trim();
+  if (!u) return true;
+  return reqTouch > u;
+}
+
+export function specReadyForDev(issue: Issue): boolean {
+  if (!hasDevSpecMarkdown(issue)) return false;
+  if (legacySpecOnly(issue)) return true;
+  if (!requirementAccepted(issue) || designStale(issue)) return false;
+  return hasNonEmptyFileChanges(issue);
+}
+
+export function hasUnverifiedModifies(issue: Issue): boolean {
+  return aggregatedFileChanges(issue).some((ch) => {
+    const action = (ch.action || '').toLowerCase();
+    if (action === 'create' || action === '') return false;
+    return !ch.verified;
+  });
 }
 
 export function readySubCount(issue: Issue): { ready: number; total: number } {

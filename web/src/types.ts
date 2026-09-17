@@ -57,9 +57,25 @@ export interface SpecFileChange {
   repoName: string;
   action: 'create' | 'modify' | 'delete';
   summary: string;
+  symbol?: string;
+  verified?: boolean;
   originalCode?: string;
   modifiedCode?: string;
 }
+
+export interface ReqDoc {
+  title?: string;
+  summary?: string;
+  scope?: string;
+  nonGoals?: string;
+  acceptance?: string;
+  constraints?: string;
+  rawMarkdown: string;
+  acceptedAt?: string;
+  updatedAt?: string;
+}
+
+export type DocPhase = 'requirement' | 'design';
 
 export interface DevSpec {
   title: string;
@@ -233,6 +249,8 @@ export interface Issue {
   associatedRepoIds: string[];
   assignee: string;
   chatMessages: ChatMessage[];
+  reqDoc?: ReqDoc;
+  docPhase?: DocPhase;
   devSpec?: DevSpec;
   subRequirements?: SubRequirement[];
   currentSubId?: string;

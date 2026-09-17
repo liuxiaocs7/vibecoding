@@ -76,7 +76,7 @@ func TestSpecReadyForDev(t *testing.T) {
 	}
 	plain.DevSpec = &model.DevSpec{RawMarkdown: "# spec"}
 	if !plain.SpecReadyForDev() {
-		t.Fatal("parent spec should be ready")
+		t.Fatal("legacy parent spec should be ready")
 	}
 	split := &model.Issue{
 		DevSpec: &model.DevSpec{RawMarkdown: "# overview"},
@@ -90,6 +90,6 @@ func TestSpecReadyForDev(t *testing.T) {
 	}
 	split.SubRequirements[1].DevSpec.RawMarkdown = "# b"
 	if !split.SpecReadyForDev() {
-		t.Fatal("all subs with specs should be ready")
+		t.Fatal("legacy all subs with specs should be ready")
 	}
 }
