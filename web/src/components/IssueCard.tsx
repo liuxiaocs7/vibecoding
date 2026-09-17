@@ -2,6 +2,7 @@ import React from 'react';
 import { Issue, GitRepo, BranchPrefixConfig } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
+import { branchNameForIssue, normalizeIssueKind } from '../lib/issueKind';
 import { GitBranch, FileText, CheckCircle2, Play, Sparkles, Tag, GitPullRequest, ShieldCheck, ArrowRight, Layers, Paperclip, Loader2 } from 'lucide-react';
 import { hasSubRequirements, readySubCount } from '../lib/subreq';
 
@@ -61,10 +62,24 @@ export const IssueCard: React.FC<IssueCardProps> = ({
     },
   }[issue.priority];
 
-  // Derive target branch preview name based on status & prefix config
-  const autoDevPrefix = branchPrefixConfig?.autoDevPrefix || 'ai-dev/';
-  const featurePrefix = branchPrefixConfig?.featurePrefix || 'feature/';
-  const activeBranchName = issue.prInfo?.branchName || `${issue.status === 'in_progress' ? autoDevPrefix : featurePrefix}issue-${issue.id.slice(-4)}`;
+  // Derive target branch preview from issue kind → project branch prefix.
+  const activeBranchName =
+    issue.prInfo?.branchName || branchNameForIssue(branchPrefixConfig, issue, 4);
+  const kind = normalizeIssueKind(issue.kind);
+  const kindLabel =
+    kind === 'bugfix' ? t.issueKindBugfix : kind === 'hotfix' ? t.issueKindHotfix : t.issueKindFeature;
+  const kindBadge =
+    kind === 'bugfix'
+      ? isLight
+        ? 'bg-orange-100 text-orange-900 border-orange-300'
+        : 'bg-orange-950/90 text-orange-200 border-orange-700/80'
+      : kind === 'hotfix'
+        ? isLight
+          ? 'bg-rose-100 text-rose-900 border-rose-300'
+          : 'bg-rose-950/90 text-rose-200 border-rose-700/80'
+        : isLight
+          ? 'bg-sky-100 text-sky-900 border-sky-300'
+          : 'bg-sky-950/90 text-sky-200 border-sky-700/80';
 
   const isCompleted = issue.status === 'completed';
   const isInReview = issue.status === 'in_review';
@@ -103,6 +118,9 @@ export const IssueCard: React.FC<IssueCardProps> = ({
           <div className="flex items-center gap-1.5 min-w-0 overflow-hidden">
             <span className={`px-2 py-0.5 rounded-md text-[10px] border shrink-0 ${priorityBadge.color}`}>
               {priorityBadge.label}
+            </span>
+            <span className={`px-2 py-0.5 rounded-md text-[10px] border shrink-0 ${kindBadge}`}>
+              {kindLabel}
             </span>
             {isCompleted && (
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border flex items-center gap-1 min-w-0 ${
@@ -195,7 +213,7 @@ export const IssueCard: React.FC<IssueCardProps> = ({
                 .replace('{ready}', String(readySubCount(issue).ready))
                 .replace('{total}', String(readySubCount(issue).total))}
             </span>
-          ) : issue.devSpec ? (
+          ) : issue.devSpec?.rawMarkdown?.trim() ? (
             <span className={`font-semibold flex items-center gap-1 text-[10px] shrink-0 ${
               isLight ? 'text-emerald-700' : 'text-emerald-300'
             }`}>

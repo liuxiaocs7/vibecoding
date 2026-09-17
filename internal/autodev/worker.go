@@ -148,15 +148,14 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 	}
 	_ = r.Store.UpdateJob(job)
 
-	prefix := "ai-dev/"
-	if proj.BranchPrefixConfig != nil && proj.BranchPrefixConfig.AutoDevPrefix != "" {
-		prefix = proj.BranchPrefixConfig.AutoDevPrefix
+	prefix := "feature/"
+	if proj.BranchPrefixConfig != nil {
+		prefix = proj.BranchPrefixConfig.PrefixForKind(issue.Kind)
+	} else {
+		bp := model.DefaultBranchPrefix()
+		prefix = bp.PrefixForKind(issue.Kind)
 	}
-	shortID := issue.ID
-	if len(shortID) > 8 {
-		shortID = shortID[len(shortID)-8:]
-	}
-	branchName := fmt.Sprintf("%sissue-%s", prefix, shortID)
+	branchName := model.BranchNameForIssue(prefix, issue.ID)
 
 	progress := func(p int, phase, msg string) error {
 		if ctx.Err() != nil {

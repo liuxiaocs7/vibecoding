@@ -491,7 +491,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                 {/* Feature Prefix */}
                 <div className={`p-3.5 border rounded-xl space-y-2 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
                   <div className="flex items-center justify-between">
-                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>特性功能开发前缀 (Feature)</label>
+                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>开发需求前缀 (Feature · 需求类型)</label>
                     <span className="text-[10px] font-mono text-indigo-700 dark:text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded border border-indigo-500/30">
                       例: {branchPrefixConfig.featurePrefix || 'feature/'}issue-101
                     </span>
@@ -509,7 +509,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                 {/* Bugfix Prefix */}
                 <div className={`p-3.5 border rounded-xl space-y-2 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
                   <div className="flex items-center justify-between">
-                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>缺陷修复前缀 (Bugfix)</label>
+                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>缺陷修复前缀 (Bugfix · 需求类型)</label>
                     <span className="text-[10px] font-mono text-indigo-700 dark:text-indigo-300 bg-indigo-500/20 px-1.5 py-0.5 rounded border border-indigo-500/30">
                       例: {branchPrefixConfig.bugfixPrefix || 'fix/'}issue-102
                     </span>
@@ -548,7 +548,7 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
                 {/* Hotfix Prefix */}
                 <div className={`p-3.5 border rounded-xl space-y-2 ${themeConfig.cardBg} ${themeConfig.cardBorder}`}>
                   <div className="flex items-center justify-between">
-                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>紧急补丁前缀 (Hotfix)</label>
+                    <label className={`text-xs font-semibold ${themeConfig.textPrimary}`}>紧急修复前缀 (Hotfix · 需求类型)</label>
                     <span className="text-[10px] font-mono text-amber-800 dark:text-amber-300 bg-amber-500/20 px-1.5 py-0.5 rounded border border-amber-500/30">
                       例: {branchPrefixConfig.hotfixPrefix || 'hotfix/'}patch-v1.2
                     </span>

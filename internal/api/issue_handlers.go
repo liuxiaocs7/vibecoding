@@ -41,6 +41,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if iss.Status == "" {
 		iss.Status = model.StatusRequirements
 	}
+	iss.Kind = model.NormalizeIssueKind(iss.Kind)
 	if err := s.Store.UpsertIssue(iss); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -63,6 +64,7 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	iss.ID = id
 	iss.CreatedAt = existing.CreatedAt
+	iss.Kind = model.NormalizeIssueKind(iss.Kind)
 	if err := validateStatusTransition(existing, &iss); err != nil {
 		writeErr(w, 400, err.Error())
 		return

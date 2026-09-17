@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Issue, IssueAttachment, GitRepo, Priority, IssueStatus } from '../types';
+import { Issue, IssueAttachment, GitRepo, Priority, IssueStatus, IssueKind, BranchPrefixConfig } from '../types';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import {
@@ -7,6 +7,7 @@ import {
   formatFileSize,
   MAX_ISSUE_ATTACHMENTS,
 } from '../lib/attachments';
+import { branchNameForIssue, normalizeIssueKind } from '../lib/issueKind';
 import { ThemedSelect } from './ThemedSelect';
 import {
   X,
@@ -30,6 +31,7 @@ interface CreateIssueModalProps {
   onClose: () => void;
   projectId: string;
   gitRepos: GitRepo[];
+  branchPrefixConfig?: BranchPrefixConfig;
   onCreate: (issue: Partial<Issue>) => void;
   lang?: Language;
   themeStyle?: ThemeStyle;
@@ -40,6 +42,7 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
   onClose,
   projectId,
   gitRepos,
+  branchPrefixConfig,
   onCreate,
   lang = 'en',
   themeStyle = 'light',
@@ -51,6 +54,7 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [priority, setPriority] = useState<Priority>('medium');
+  const [kind, setKind] = useState<IssueKind>('feature');
   const [status, setStatus] = useState<IssueStatus>('requirements');
   const [selectedRepoIds, setSelectedRepoIds] = useState<string[]>(
     gitRepos.map((r) => r.id)
@@ -119,6 +123,7 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
       attachments: attachments.length ? attachments : undefined,
       status,
       priority,
+      kind: normalizeIssueKind(kind),
       assignee,
       associatedRepoIds: selectedRepoIds,
       createdAt: new Date().toISOString(),
@@ -153,6 +158,7 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
       setDescription('');
       setAttachments([]);
       setAttachErrors([]);
+      setKind('feature');
     } else {
       onClose();
     }
@@ -424,6 +430,51 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
                     <option value="high">{lang === 'zh' ? '高 (High)' : 'High'}</option>
                     <option value="urgent">{lang === 'zh' ? '紧急 (Urgent)' : 'Urgent'}</option>
                   </ThemedSelect>
+                </div>
+
+                <div>
+                  <label className={`block text-sm font-semibold mb-2 ${themeConfig.textPrimary}`}>
+                    {t.createIssueKind}
+                  </label>
+                  <div className="grid grid-cols-1 gap-2">
+                    {(
+                      [
+                        { id: 'feature' as IssueKind, label: t.issueKindFeature },
+                        { id: 'bugfix' as IssueKind, label: t.issueKindBugfix },
+                        { id: 'hotfix' as IssueKind, label: t.issueKindHotfix },
+                      ] as const
+                    ).map((opt) => {
+                      const selected = kind === opt.id;
+                      return (
+                        <button
+                          type="button"
+                          key={opt.id}
+                          onClick={() => setKind(opt.id)}
+                          className={`px-3 py-2 rounded-xl text-sm font-medium border flex items-center justify-between transition-all ${
+                            selected
+                              ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-800 dark:text-indigo-200 ring-1 ring-indigo-500/40 font-bold'
+                              : `${themeConfig.inputBg} ${themeConfig.inputBorder} ${themeConfig.textSecondary}`
+                          }`}
+                        >
+                          <span>{opt.label}</span>
+                          {selected && <Check className="w-3.5 h-3.5 shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className={`mt-1.5 text-[11px] ${themeConfig.textMuted}`}>{t.createIssueKindHint}</p>
+                  <div
+                    className={`mt-2 flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1.5 rounded-lg border ${themeConfig.inputBg} ${themeConfig.inputBorder} ${themeConfig.textSecondary}`}
+                  >
+                    <GitBranch className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                    <span className={`shrink-0 ${themeConfig.textMuted}`}>{t.createIssueBranchPreview}:</span>
+                    <span className="truncate">
+                      {branchNameForIssue(branchPrefixConfig, {
+                        id: 'ISSUE-preview',
+                        kind,
+                      })}
+                    </span>
+                  </div>
                 </div>
 
                 <div>
