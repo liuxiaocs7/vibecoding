@@ -1,4 +1,4 @@
-.PHONY: all web sync-web build build-server backend run run-server dev doctor dev-desktop clean release
+.PHONY: all web sync-web build build-server backend run run-server dev doctor dev-desktop wails-build clean release
 
 BINARY := vibecoding
 
@@ -16,6 +16,12 @@ doctor:
 # Desktop live reload via Wails.
 dev-desktop:
 	wails dev
+
+# Packaged desktop app (.app on macOS) via Wails CLI.
+# Root mains use //go:build desktop || bindings — Wails strips "desktop" during
+# bindings generation and rebuilds with the "bindings" tag instead.
+wails-build:
+	wails build
 
 # Build the React SPA into web/dist, then sync into cmd/vibecoding/dist for server embed.
 web:

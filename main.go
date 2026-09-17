@@ -1,4 +1,4 @@
-//go:build desktop
+//go:build desktop || bindings
 
 package main
 
@@ -12,6 +12,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 	"github.com/ymhhh/go-common/logger"
 	"github.com/ymhhh/vibecoding/internal/appbootstrap"
@@ -20,6 +21,9 @@ import (
 
 //go:embed all:web/dist
 var embeddedFrontend embed.FS
+
+//go:embed build/appicon.png
+var appIcon []byte
 
 func main() {
 	cfg, err := config.Parse()
@@ -57,7 +61,7 @@ func main() {
 		MinWidth:         960,
 		MinHeight:        640,
 		DisableResize:    false,
-		BackgroundColour: &options.RGBA{R: 27, G: 38, B: 54, A: 1},
+		BackgroundColour: &options.RGBA{R: 11, G: 18, B: 32, A: 1},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 			Middleware: func(next http.Handler) http.Handler {
@@ -75,6 +79,14 @@ func main() {
 		Mac: &mac.Options{
 			DisableZoom: false,
 			TitleBar:    mac.TitleBarDefault(),
+			About: &mac.AboutInfo{
+				Title:   "Vibecoding",
+				Message: "© 2026 ymhhh\nLocal-first AI Auto-Dev board",
+				Icon:    appIcon,
+			},
+		},
+		Linux: &linux.Options{
+			Icon: appIcon,
 		},
 		OnStartup:  app.startup,
 		OnShutdown: app.shutdown,
