@@ -28,7 +28,7 @@ export const IssueDetailHeader: React.FC<IssueDetailHeaderProps> = ({
   onDeleteIssue,
   setActiveTab,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const deleteWrapRef = useRef<HTMLDivElement>(null);

@@ -4,7 +4,7 @@ import { Issue, GitRepo, ModelConfig, BranchPrefixConfig, SubRequirement, DiffCo
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { api } from '../../lib/api';
-import { hasSubRequirements, specMarkdownForExport, visibleSpec } from '../../lib/subreq';
+import { hasSubRequirements, specMarkdownForExport, reqMarkdownForExport, visibleSpec } from '../../lib/subreq';
 import { formatReviewComments } from '../../lib/reviewComments';
 import { saveTextFile } from '../../lib/savefile';
 import { useIssueChat } from './useIssueChat';
@@ -59,9 +59,9 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   onDeleteIssue,
   projectId,
   lang = 'en' as Language,
-  themeStyle = 'glass',
+  themeStyle = 'light',
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
 
   const [activeTab, setActiveTab] = useState<'chat' | 'spec' | 'console' | 'review'>('chat');
@@ -370,6 +370,36 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     }
   };
 
+  const handleExportReqDoc = async () => {
+    const { filename, markdown } = reqMarkdownForExport(issue, reqMarkdown);
+    if (!markdown.trim()) {
+      setChatError(t.noReqToExport);
+      setExportHint('');
+      return;
+    }
+    setChatError('');
+    setExportHint('');
+    setExporting(true);
+    try {
+      const result = await saveTextFile(filename, markdown);
+      if (result.status === 'cancelled') {
+        setExportHint(lang === 'zh' ? '已取消导出' : 'Export cancelled');
+        return;
+      }
+      if (result.status === 'copied') {
+        setExportHint(t.exportCopied);
+        return;
+      }
+      setExportHint(
+        result.path ? t.exportSavedTo.replace('{path}', result.path) : t.exportSaved
+      );
+    } catch (err: any) {
+      setChatError(err?.message || t.exportFailed);
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4 sm:p-6"
@@ -477,6 +507,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               setActiveTab={setActiveTab}
               handleSendMessage={handleSendMessage}
               handleExportDevSpec={handleExportDevSpec}
+              handleExportReqDoc={handleExportReqDoc}
               onUpdateIssue={onUpdateIssue}
               pendingLlm={pendingLlm}
               onRetrySession={handleRetrySession}

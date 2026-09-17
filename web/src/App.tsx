@@ -63,7 +63,7 @@ export default function App() {
   const unsubscribers = useRef<Map<string, () => void>>(new Map());
 
   const t = getTranslation(language);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
 
   const showToast = useCallback((type: 'error' | 'info' | 'success', text: string) => {
     setToast({ type, text });

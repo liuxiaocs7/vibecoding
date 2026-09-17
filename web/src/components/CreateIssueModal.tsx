@@ -42,10 +42,10 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
   gitRepos,
   onCreate,
   lang = 'en',
-  themeStyle = 'glass',
+  themeStyle = 'light',
 }) => {
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const isLight = themeConfig.isLight;
 
   const [title, setTitle] = useState('');

@@ -219,6 +219,13 @@ export const api = {
       body: '{}',
     }),
 
+  /** Convert issue brief (title/description/attachments) into a Markdown ReqDoc without LLM. */
+  reqDocFromBrief: (issueId: string) =>
+    request<Issue>(`/api/issues/${issueId}/req-doc/from-brief`, {
+      method: 'POST',
+      body: '{}',
+    }),
+
   splitIssueStream: (
     issueId: string,
     body: SpecStreamBody,

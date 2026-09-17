@@ -23,7 +23,7 @@ export const IssueSessionChip: React.FC<IssueSessionChipProps> = ({
   onDismiss,
 }) => {
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   return (
     <div
       className={`pointer-events-auto w-[280px] rounded-2xl border shadow-2xl backdrop-blur-md px-3 py-2.5 flex items-start gap-2 ${themeConfig.modalBg} ${themeConfig.cardBorder}`}

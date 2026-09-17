@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ymhhh/vibecoding/internal/model"
@@ -105,5 +106,54 @@ func TestGenerateSpecRequiresAcceptedReq(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != 400 {
 		t.Fatalf("expected 400, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestReqDocFromBriefAndExport(t *testing.T) {
+	srv, store := testServer(t)
+	h := srv.Handler()
+
+	iss := model.Issue{
+		ID:          "ISSUE-REQ-MD",
+		ProjectID:   "proj-1",
+		Title:       "Brief Feature",
+		Description: "Ship markdown requirements",
+		Status:      model.StatusRequirements,
+		CreatedAt:   model.NowISO(),
+		UpdatedAt:   model.NowISO(),
+	}
+	if err := store.UpsertIssue(iss); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/"+iss.ID+"/req-doc/from-brief", bytes.NewReader([]byte("{}")))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("from-brief status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var saved model.Issue
+	if err := json.Unmarshal(rr.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved.ReqDoc == nil || !strings.Contains(saved.ReqDoc.RawMarkdown, "# Brief Feature") {
+		t.Fatalf("expected markdown reqDoc, got %+v", saved.ReqDoc)
+	}
+	if saved.DocPhase != model.DocPhaseRequirement {
+		t.Fatalf("docPhase=%q", saved.DocPhase)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/issues/"+iss.ID+"/export-req", nil)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("export-req status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "Ship markdown requirements") {
+		t.Fatalf("export body=%s", rr.Body.String())
+	}
+	cd := rr.Header().Get("Content-Disposition")
+	if !strings.Contains(cd, ".md") {
+		t.Fatalf("Content-Disposition=%q", cd)
 	}
 }

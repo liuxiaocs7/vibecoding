@@ -31,7 +31,7 @@ export const SubRequirementBar: React.FC<SubRequirementBarProps> = ({
 }) => {
   const subs = issue.subRequirements || [];
   if (subs.length === 0) return null;
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
 
   return (
     <div className={`rounded-xl border ${themeConfig.cardBg} ${themeConfig.subtleBorder} ${compact ? 'p-2.5' : 'p-3'}`}>

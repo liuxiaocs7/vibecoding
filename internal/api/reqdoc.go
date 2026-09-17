@@ -25,7 +25,7 @@ Update the REQUIREMENT document only (what to build). Do NOT write architecture,
 
 Return ONLY a JSON object (no markdown fences) with:
 - chatReply: short natural-language reply (2-8 sentences)
-- rawMarkdown: COMPLETE requirement Markdown with:
+- rawMarkdown: COMPLETE requirement document as GitHub-flavored Markdown (this is the stored document). Required sections:
   # Title
   ## 概述 / Summary
   ## 范围 / Scope
@@ -35,6 +35,7 @@ Return ONLY a JSON object (no markdown fences) with:
 - title, summary, scope, nonGoals, acceptance, constraints
 
 Rules:
+- rawMarkdown MUST be real Markdown with # / ## headings (not plain paragraphs only).
 - If a previous requirement document is provided, revise in place; keep unrelated sections.
 - Stay product-focused. No Target Files, no Implementation Steps.`
 
@@ -104,6 +105,73 @@ func (s *Server) handleAcceptRequirement(w http.ResponseWriter, r *http.Request)
 	}
 	saved, _ := s.Store.GetIssue(issue.ID)
 	writeJSON(w, 200, saved)
+}
+
+// handleReqDocFromBrief converts the issue title/description/attachments into a Markdown ReqDoc
+// without calling the LLM (local template).
+func (s *Server) handleReqDocFromBrief(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	md := llm.BriefToReqMarkdown(issue)
+	issue.ReqDoc = &model.ReqDoc{
+		Title:       issue.Title,
+		Summary:     truncateRunes(issue.Description, 200),
+		RawMarkdown: md,
+		UpdatedAt:   model.NowISO(),
+	}
+	issue.TouchReqDoc()
+	issue.DocPhase = model.DocPhaseRequirement
+	issue.UpdatedAt = model.NowISO()
+	if err := s.Store.UpsertIssue(*issue); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	saved, _ := s.Store.GetIssue(issue.ID)
+	writeJSON(w, 200, saved)
+}
+
+func (s *Server) handleExportReqDoc(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	md := ""
+	title := issue.Title
+	if issue.ReqDoc != nil {
+		md = strings.TrimSpace(issue.ReqDoc.RawMarkdown)
+		if issue.ReqDoc.Title != "" {
+			title = issue.ReqDoc.Title
+		}
+	}
+	if md == "" {
+		writeErr(w, 404, "no requirement document to export")
+		return
+	}
+	filename := specExportFileName(title + "-req")
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Disposition", specContentDisposition(filename))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(md))
+}
+
+func truncateRunes(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if n <= 0 || s == "" {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 func reqDocDonePayload(doc *model.ReqDoc, chatReply, process string, issue *model.Issue) map[string]any {

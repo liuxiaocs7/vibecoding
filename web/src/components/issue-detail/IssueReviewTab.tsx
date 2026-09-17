@@ -49,7 +49,7 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
   publishingRemote,
   onCommentsChange,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
 
   return (

@@ -30,7 +30,7 @@ export function loadThemeStyle(): ThemeStyle {
   } catch {
     /* ignore */
   }
-  return 'glass';
+  return 'light';
 }
 
 export function saveThemeStyle(theme: ThemeStyle): void {

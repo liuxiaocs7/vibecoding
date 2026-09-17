@@ -23,7 +23,7 @@ export const LLMRecoveryBar: React.FC<LLMRecoveryBarProps> = ({
 }) => {
   if (!session?.prompt || busy) return null;
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   return (
     <div className="mx-4 mb-3 p-3 rounded-xl border border-amber-500/40 bg-amber-500/10 space-y-2">
       <div className="flex items-start gap-2 text-[11px] text-amber-800 dark:text-amber-200">

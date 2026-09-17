@@ -26,10 +26,10 @@ export const IssueCard: React.FC<IssueCardProps> = ({
   gitRepos,
   branchPrefixConfig,
   lang = 'en',
-  themeStyle = 'glass',
+  themeStyle = 'light',
 }) => {
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const isLight = themeConfig.isLight;
 
   const associatedRepos = gitRepos.filter((r) => issue.associatedRepoIds.includes(r.id));

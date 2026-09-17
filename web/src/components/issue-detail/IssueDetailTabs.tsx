@@ -21,7 +21,7 @@ export const IssueDetailTabs: React.FC<IssueDetailTabsProps> = ({
   lang,
   themeStyle,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
 
   return (

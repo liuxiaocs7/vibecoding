@@ -59,8 +59,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/test-openapi", s.handleTestOpenAPI)
 	mux.HandleFunc("POST /api/issues/{id}/spec", s.handleGenerateSpec)
 	mux.HandleFunc("POST /api/issues/{id}/req-doc", s.handleGenerateReqDoc)
+	mux.HandleFunc("POST /api/issues/{id}/req-doc/from-brief", s.handleReqDocFromBrief)
 	mux.HandleFunc("POST /api/issues/{id}/accept-requirement", s.handleAcceptRequirement)
 	mux.HandleFunc("GET /api/issues/{id}/export-spec", s.handleExportSpec)
+	mux.HandleFunc("GET /api/issues/{id}/export-req", s.handleExportReqDoc)
 	mux.HandleFunc("POST /api/export-file", s.handleExportFile)
 	mux.HandleFunc("POST /api/issues/{id}/split", s.handleSplitIssue)
 

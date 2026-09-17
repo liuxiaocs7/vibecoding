@@ -84,7 +84,10 @@ export const TRANSLATIONS = {
     verifiedBadge: 'verified',
     unverifiedBadge: 'unverified',
     noReqDocYet: 'No requirement document yet',
-    noReqDocHint: 'Use Extract Requirement Doc after clarifying the product need.',
+    noReqDocHint: 'Convert the issue brief into Markdown, or ask AI to extract a full requirement doc.',
+    convertBriefToReqMd: 'Convert brief → Markdown',
+    exportReqDoc: 'Export Requirement .md',
+    noReqToExport: 'No requirement document to export',
     sourceScanNotice: 'Design generation scans local repos and sends excerpts to your configured LLM.',
 
     stageFocusBacklogTitle: 'Stage Focus: Confirm Dev Spec & Schedule Execution',
@@ -372,7 +375,10 @@ export const TRANSLATIONS = {
     verifiedBadge: '已核实',
     unverifiedBadge: '未核实',
     noReqDocYet: '尚未生成需求文档',
-    noReqDocHint: '澄清产品目标后，点击「提炼需求文档」。',
+    noReqDocHint: '可将 Issue 描述转为 Markdown 需求文档，或让 AI 提炼完整需求。',
+    convertBriefToReqMd: '描述 → Markdown 需求文档',
+    exportReqDoc: '导出需求 Markdown',
+    noReqToExport: '没有可导出的需求文档',
     sourceScanNotice: '生成设计时会扫描本机关联仓库，并把源码摘要发给已配置的大模型。',
 
     stageFocusBacklogTitle: '阶段侧重点: 确认 Dev Spec & 排期准备',

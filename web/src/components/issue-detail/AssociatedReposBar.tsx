@@ -27,7 +27,7 @@ export const AssociatedReposBar: React.FC<AssociatedReposBarProps> = ({
   lang,
   themeStyle,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
 
   return (
     <div className={`px-5 py-2.5 border-b ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>

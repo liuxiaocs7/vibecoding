@@ -7,7 +7,8 @@ import { SubRequirementBar } from '../SubRequirementBar';
 import { FileText, Sparkles, Loader2, Download, Edit3, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { LLMRecoveryBar } from './LLMRecoveryBar';
 import { SendMessageOpts } from './useIssueChat';
-import { requirementAccepted, hasReqDoc } from '../../lib/subreq';
+import { requirementAccepted, hasReqDoc, briefToReqMarkdown } from '../../lib/subreq';
+import { api } from '../../lib/api';
 
 interface IssueSpecTabProps {
   issue: Issue;
@@ -31,6 +32,7 @@ interface IssueSpecTabProps {
   setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
   handleSendMessage: (customPrompt?: string, opts?: SendMessageOpts) => Promise<void>;
   handleExportDevSpec: () => Promise<void>;
+  handleExportReqDoc?: () => Promise<void>;
   onUpdateIssue: (updatedIssue: Issue) => void;
   pendingLlm?: PendingLLMSession | null;
   onRetrySession?: () => void;
@@ -59,18 +61,48 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   setActiveTab,
   handleSendMessage,
   handleExportDevSpec,
+  handleExportReqDoc,
   onUpdateIssue,
   pendingLlm,
   onRetrySession,
   onRegenerate,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
   const [docPane, setDocPane] = useState<'req' | 'design'>(
     hasReqDoc(issue) && !requirementAccepted(issue) ? 'req' : 'design'
   );
   const [editingReq, setEditingReq] = useState(false);
+  const [convertingBrief, setConvertingBrief] = useState(false);
   const changes: SpecFileChange[] = currentSpec?.fileChanges || [];
+
+  const convertBriefToMarkdown = async () => {
+    setConvertingBrief(true);
+    try {
+      const saved = await api.reqDocFromBrief(issue.id);
+      onUpdateIssue(saved);
+      setReqMarkdown(saved.reqDoc?.rawMarkdown || '');
+      setEditingReq(true);
+    } catch {
+      const md = briefToReqMarkdown(issue);
+      const now = new Date().toISOString();
+      onUpdateIssue({
+        ...issue,
+        reqDoc: {
+          title: issue.title,
+          summary: (issue.description || '').slice(0, 200),
+          rawMarkdown: md,
+          updatedAt: now,
+        },
+        docPhase: 'requirement',
+        updatedAt: now,
+      });
+      setReqMarkdown(md);
+      setEditingReq(true);
+    } finally {
+      setConvertingBrief(false);
+    }
+  };
 
   return (
     <div className="flex-1 p-6 overflow-y-auto space-y-4">
@@ -139,25 +171,52 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
             <FileText className={`w-12 h-12 mx-auto mb-3 ${themeConfig.textMuted}`} />
             <h3 className={`text-base font-semibold ${themeConfig.textPrimary}`}>{t.noReqDocYet}</h3>
             <p className={`text-xs max-w-md mx-auto mt-1 mb-4 ${themeConfig.textMuted}`}>{t.noReqDocHint}</p>
-            <button
-              onClick={() => {
-                setActiveTab('chat');
-                handleSendMessage(
-                  lang === 'zh'
-                    ? '请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收标准、约束）。'
-                    : 'Extract a complete requirement document.',
-                  { forceReqDoc: true }
-                );
-              }}
-              className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
-            >
-              <Sparkles className="w-4 h-4" />
-              {t.extractReqBtn}
-            </button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button
+                onClick={() => void convertBriefToMarkdown()}
+                disabled={convertingBrief}
+                className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all disabled:opacity-50"
+              >
+                {convertingBrief ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <FileText className="w-4 h-4" />
+                )}
+                {t.convertBriefToReqMd}
+              </button>
+              <button
+                onClick={() => {
+                  setActiveTab('chat');
+                  handleSendMessage(
+                    lang === 'zh'
+                      ? '请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收标准、约束），输出 Markdown。'
+                      : 'Extract a complete requirement document as Markdown.',
+                    { forceReqDoc: true }
+                  );
+                }}
+                className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 transition-all"
+              >
+                <Sparkles className="w-4 h-4" />
+                {t.extractReqBtn}
+              </button>
+            </div>
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex justify-end gap-2">
+            <div className="flex justify-end gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => handleExportReqDoc?.()}
+                disabled={exporting || !handleExportReqDoc}
+                className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 disabled:opacity-50 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+              >
+                {exporting ? (
+                  <Loader2 className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
+                ) : (
+                  <Download className="w-3.5 h-3.5 text-emerald-500" />
+                )}
+                {t.exportReqDoc}
+              </button>
               <button
                 onClick={() => {
                   if (!editingReq) setReqMarkdown(issue.reqDoc?.rawMarkdown || '');
@@ -166,9 +225,20 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                 className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
               >
                 <Edit3 className="w-3.5 h-3.5 text-cyan-500" />
-                {editingReq ? (lang === 'zh' ? '退出编辑' : 'Cancel') : lang === 'zh' ? '编辑' : 'Edit'}
+                {editingReq
+                  ? lang === 'zh'
+                    ? '退出编辑'
+                    : 'Cancel'
+                  : lang === 'zh'
+                    ? '编辑 Markdown'
+                    : 'Edit Markdown'}
               </button>
             </div>
+            {exportHint && docPane === 'req' && (
+              <div className="text-[11px] text-emerald-600 dark:text-emerald-400 select-text break-all">
+                {exportHint}
+              </div>
+            )}
             {editingReq ? (
               <div className="space-y-2">
                 <textarea
@@ -196,7 +266,6 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                           ...(issue.reqDoc || { rawMarkdown: '' }),
                           rawMarkdown: reqMarkdown,
                           updatedAt: now,
-                          // editing clears acceptance until re-accept
                           acceptedAt: undefined,
                         },
                         docPhase: 'requirement',
@@ -206,12 +275,17 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                     }}
                     className="px-3 py-1.5 text-xs rounded-lg bg-cyan-600 text-white font-semibold"
                   >
-                    {lang === 'zh' ? '保存' : 'Save'}
+                    {lang === 'zh' ? '保存 Markdown' : 'Save Markdown'}
                   </button>
                 </div>
               </div>
             ) : (
-              <MarkdownView text={issue.reqDoc.rawMarkdown} />
+              <div className={`rounded-xl border p-4 ${themeConfig.cardBg}`}>
+                <p className={`text-[10px] uppercase tracking-wider mb-2 ${themeConfig.textMuted}`}>
+                  Markdown
+                </p>
+                <MarkdownView text={issue.reqDoc.rawMarkdown} />
+              </div>
             )}
           </div>
         )

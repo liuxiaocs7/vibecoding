@@ -28,10 +28,10 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   onOpenCreateIssue,
   analyzingIssueIds,
   lang = 'en',
-  themeStyle = 'glass',
+  themeStyle = 'light',
 }) => {
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const isLight = themeConfig.isLight;
 
   const columns: { id: IssueStatus; title: string; subtitle: string; icon: any; accentColor: string }[] = [

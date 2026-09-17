@@ -22,7 +22,7 @@ export const StartAutoDevModal: React.FC<StartAutoDevModalProps> = ({
   themeStyle,
 }) => {
   const t = getTranslation(lang);
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [probes, setProbes] = useState<ExecutorProbe[]>([]);

@@ -24,7 +24,7 @@ export const IssueConsoleTab: React.FC<IssueConsoleTabProps> = ({
   themeStyle,
   onStartAutoDev,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const isLight = themeConfig.isLight;
   const t = getTranslation(lang);
 

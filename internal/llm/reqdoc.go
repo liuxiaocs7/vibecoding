@@ -74,6 +74,85 @@ func buildReqMarkdown(title, summary, scope, nonGoals, acceptance, constraints s
 	return b.String()
 }
 
+// BriefToReqMarkdown turns an issue brief (title/description/attachments) into a Markdown ReqDoc body.
+func BriefToReqMarkdown(issue *model.Issue) string {
+	if issue == nil {
+		return "# Requirement\n\n## 概述 / Summary\n\n_(empty)_\n"
+	}
+	title := strings.TrimSpace(issue.Title)
+	if title == "" {
+		title = "Requirement"
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n## 概述 / Summary\n\n", title)
+	desc := strings.TrimSpace(issue.Description)
+	if desc == "" {
+		b.WriteString("_(待补充)_\n")
+	} else {
+		b.WriteString(desc)
+		b.WriteString("\n")
+	}
+	hasTextAtt := false
+	for _, a := range issue.Attachments {
+		if strings.TrimSpace(a.Text) != "" {
+			hasTextAtt = true
+			break
+		}
+	}
+	if hasTextAtt {
+		b.WriteString("\n## 附件原文 / Attached briefs\n\n")
+		for _, a := range issue.Attachments {
+			text := strings.TrimSpace(a.Text)
+			if text == "" {
+				continue
+			}
+			name := strings.TrimSpace(a.Name)
+			if name == "" {
+				name = "attachment"
+			}
+			fmt.Fprintf(&b, "### %s\n\n%s\n\n", name, text)
+		}
+	}
+	hasImg := false
+	for _, a := range issue.Attachments {
+		if a.Kind == "image" {
+			hasImg = true
+			break
+		}
+	}
+	if hasImg {
+		b.WriteString("## 附图 / Images\n\n")
+		for _, a := range issue.Attachments {
+			if a.Kind != "image" {
+				continue
+			}
+			name := strings.TrimSpace(a.Name)
+			if name == "" {
+				name = "image"
+			}
+			fmt.Fprintf(&b, "- %s\n", name)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString(`## 范围 / Scope
+
+_(待补充：本期要做什么)_
+
+## 非目标 / Non-goals
+
+_(待补充：明确不做的内容)_
+
+## 验收标准 / Acceptance
+
+_(待补充：可验证的完成条件)_
+
+## 约束 / Constraints
+
+_(待补充：技术/业务约束)_
+`)
+	return b.String()
+}
+
 // WantedFileRef is Pass-1 model output for files to read.
 type WantedFileRef struct {
 	RepoName string `json:"repoName"`

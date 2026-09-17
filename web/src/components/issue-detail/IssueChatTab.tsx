@@ -62,7 +62,7 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
   onRetrySession,
   onRegenerate,
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
 
   return (

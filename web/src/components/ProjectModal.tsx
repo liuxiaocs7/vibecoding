@@ -37,10 +37,10 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   onClose,
   onSave,
   existingProject,
-  themeStyle = 'glass',
+  themeStyle = 'light',
   lang = 'zh',
 }) => {
-  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const isLight = themeConfig.isLight;
   const t = getTranslation(lang);
 

@@ -3,6 +3,8 @@ package llm
 import (
 	"strings"
 	"testing"
+
+	"github.com/ymhhh/vibecoding/internal/model"
 )
 
 func TestParseReqDocJSON(t *testing.T) {
@@ -54,6 +56,31 @@ func TestParseReqSplitJSONNoDevSpec(t *testing.T) {
 	for _, sub := range got.SubRequirements {
 		if sub.DevSpec != nil {
 			t.Fatalf("expected no DevSpec, got %+v", sub.DevSpec)
+		}
+	}
+}
+
+func TestBriefToReqMarkdown(t *testing.T) {
+	md := BriefToReqMarkdown(&model.Issue{
+		Title:       "Login",
+		Description: "Users can sign in",
+		Attachments: []model.IssueAttachment{
+			{Name: "notes.txt", Text: "SSO only", Kind: "text"},
+			{Name: "wire.png", Kind: "image"},
+		},
+	})
+	for _, want := range []string{
+		"# Login",
+		"## 概述 / Summary",
+		"Users can sign in",
+		"## 附件原文 / Attached briefs",
+		"SSO only",
+		"## 附图 / Images",
+		"wire.png",
+		"## 验收标准 / Acceptance",
+	} {
+		if !strings.Contains(md, want) {
+			t.Fatalf("missing %q in:\n%s", want, md)
 		}
 	}
 }

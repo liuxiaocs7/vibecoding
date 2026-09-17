@@ -107,6 +107,67 @@ export function specFilename(title: string, fallback: string): string {
   return base.endsWith('.md') ? base : `${base}.md`;
 }
 
+/** Build a Markdown requirement document from the issue brief + attachment text. */
+export function briefToReqMarkdown(issue: Issue): string {
+  const title = (issue.title || 'Requirement').trim();
+  const desc = (issue.description || '').trim();
+  const parts: string[] = [`# ${title}`, ''];
+
+  parts.push('## 概述 / Summary', '');
+  parts.push(desc || '_(待补充)_', '');
+
+  const attachments = issue.attachments || [];
+  const textAtts = attachments.filter((a) => (a.text || '').trim());
+  if (textAtts.length > 0) {
+    parts.push('## 附件原文 / Attached briefs', '');
+    for (const a of textAtts) {
+      parts.push(`### ${a.name || 'attachment'}`, '', a.text!.trim(), '');
+    }
+  }
+
+  const imageAtts = attachments.filter((a) => a.kind === 'image');
+  if (imageAtts.length > 0) {
+    parts.push('## 附图 / Images', '');
+    for (const a of imageAtts) {
+      parts.push(`- ${a.name || 'image'}`, '');
+    }
+  }
+
+  parts.push(
+    '## 范围 / Scope',
+    '',
+    '_(待补充：本期要做什么)_',
+    '',
+    '## 非目标 / Non-goals',
+    '',
+    '_(待补充：明确不做的内容)_',
+    '',
+    '## 验收标准 / Acceptance',
+    '',
+    '_(待补充：可验证的完成条件)_',
+    '',
+    '## 约束 / Constraints',
+    '',
+    '_(待补充：技术/业务约束)_',
+    ''
+  );
+  return parts.join('\n');
+}
+
+export function reqMarkdownForExport(
+  issue: Issue,
+  editingMarkdown?: string
+): { filename: string; markdown: string } {
+  const editing = editingMarkdown?.trim();
+  if (editing) {
+    const title = issue.reqDoc?.title || issue.title || 'requirement';
+    return { filename: specFilename(title, `${issue.id}-req`), markdown: editing };
+  }
+  const md = (issue.reqDoc?.rawMarkdown || '').trim();
+  const title = issue.reqDoc?.title || issue.title || 'requirement';
+  return { filename: specFilename(`${title}-req`, `${issue.id}-req`), markdown: md };
+}
+
 export function specMarkdownForExport(
   issue: Issue,
   scope: string,

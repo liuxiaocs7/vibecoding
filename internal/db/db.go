@@ -159,7 +159,7 @@ func upgradeModelConfigURLs(cfg *model.ModelConfig) bool {
 }
 
 func (s *Store) GetUIPrefs() (model.UIPrefs, error) {
-	prefs := model.UIPrefs{Language: "en", ThemeStyle: "glass"}
+	prefs := model.UIPrefs{Language: "en", ThemeStyle: "light"}
 	ok, err := s.GetSetting("ui_prefs", &prefs)
 	if err != nil {
 		return prefs, err
