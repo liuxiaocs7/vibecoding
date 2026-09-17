@@ -405,3 +405,62 @@ func ReadFile(dir, rel string) (string, error) {
 	}
 	return string(b), nil
 }
+
+// GrepHit is one git-grep match (path + 1-based line).
+type GrepHit struct {
+	Path string
+	Line int
+	Text string
+}
+
+// Grep runs `git grep -n -I -e <pattern>` for each pattern and returns hits.
+// Missing matches are not errors (exit code 1 from git grep).
+func Grep(dir string, patterns []string, maxHits int) ([]GrepHit, error) {
+	if maxHits <= 0 {
+		maxHits = 80
+	}
+	var out []GrepHit
+	seen := map[string]bool{}
+	for _, pat := range patterns {
+		pat = strings.TrimSpace(pat)
+		if pat == "" {
+			continue
+		}
+		raw, err := run(dir, "grep", "-n", "-I", "-e", pat, "--", ".")
+		if err != nil {
+			// git grep returns exit 1 when no matches
+			if strings.TrimSpace(raw) == "" {
+				continue
+			}
+		}
+		for _, line := range strings.Split(raw, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			// format: path:lineno:text
+			first := strings.Index(line, ":")
+			if first < 0 {
+				continue
+			}
+			path := line[:first]
+			rest := line[first+1:]
+			second := strings.Index(rest, ":")
+			if second < 0 {
+				continue
+			}
+			ln, _ := strconv.Atoi(rest[:second])
+			text := rest[second+1:]
+			key := path + ":" + strconv.Itoa(ln)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			out = append(out, GrepHit{Path: path, Line: ln, Text: text})
+			if len(out) >= maxHits {
+				return out, nil
+			}
+		}
+	}
+	return out, nil
+}
