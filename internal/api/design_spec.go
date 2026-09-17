@@ -171,7 +171,8 @@ Return ONLY JSON:
 Rules:
 - Only cite paths/symbols that appear in the excerpts (create may propose new relative paths under a known repoName).
 - Each fileChange must include repoName and a concrete filePath.
-- Stay within THIS scope only: ` + scopeLabel
+- Stay within THIS scope only: ` + scopeLabel + `
+- If Previous Dev Spec is non-empty and the user asks to revise/improve/补充, merge their request into a COMPLETE updated rawMarkdown (do not leave the changes only in chatReply).`
 
 	pass2User := fmt.Sprintf(`Issue: %s
 Scope: %s

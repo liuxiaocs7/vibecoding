@@ -21,6 +21,28 @@ export type SendMessageOpts = {
   resume?: 'session' | 'fresh';
 };
 
+/** User phrasing that should rewrite the Dev Spec (not idle analysis chat). */
+export function wantsDesignDocUpdate(text: string): boolean {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (
+    /(开发设计|设计文档|dev\s*spec|design\s*doc)/i.test(t) &&
+    /(改|更新|修订|改进|完善|补充|重写|重新生成|结合|基于|根据|同步|写入|落到)/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /(update|revise|improve|rewrite|regenerate|amend).{0,40}(dev\s*spec|design(\s*doc)?)/i.test(t) ||
+    /(dev\s*spec|design(\s*doc)?).{0,40}(update|revise|improve|rewrite|regenerate|amend)/i.test(t)
+  ) {
+    return true;
+  }
+  if (/结合.{0,40}(源码|仓库|代码).{0,40}(改进|完善|更新|修订).{0,20}(设计|spec)/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(resolve, ms);
@@ -135,8 +157,11 @@ export function useIssueChat(params: {
     abortRef.current = ac;
 
     const syncReqDoc = !!(opts?.forceReqDoc || session?.syncReqDoc);
-    const syncSpec = !!(opts?.forceSpecSync || session?.syncSpec);
-    // Idle chat never rewrites documents — only explicit buttons / resume flags do.
+    const explicitSpec = !!(opts?.forceSpecSync || session?.syncSpec);
+    // Idle chat stays analysis-only; design-revision phrasing (or explicit buttons) syncs Dev Spec.
+    const syncSpec =
+      explicitSpec ||
+      (!syncReqDoc && !split && !(session?.split) && wantsDesignDocUpdate(promptToUse));
     const syncDocs = split || syncReqDoc || syncSpec;
 
     const processId = `proc-${Date.now()}`;

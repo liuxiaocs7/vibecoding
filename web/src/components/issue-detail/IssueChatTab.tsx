@@ -6,6 +6,7 @@ import { MarkdownView } from '../../lib/markdown';
 import { SubRequirementBar } from '../SubRequirementBar';
 import { ModelProcessState, SendMessageOpts } from './useIssueChat';
 import { LLMRecoveryBar } from './LLMRecoveryBar';
+import { requirementAccepted, legacySpecOnly } from '../../lib/subreq';
 import {
   Sparkles,
   Bot,
@@ -64,6 +65,12 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
+  const reqOk = requirementAccepted(issue) || legacySpecOnly(issue);
+  const canDesign = reqOk && (issue.associatedRepoIds || []).length > 0;
+  const hasDesign = !!(
+    issue.devSpec?.rawMarkdown?.trim() ||
+    (issue.subRequirements || []).some((s) => !!s.devSpec?.rawMarkdown?.trim())
+  );
 
   return (
     <div className="flex-1 flex flex-col h-full overflow-hidden">
@@ -274,8 +281,8 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
                 ? t.chatUpdatesAll
                 : t.chatUpdatesSub
               : lang === 'zh'
-              ? '闲聊只分析；写文档请用阶段横幅上的按钮'
-              : 'Chat is analysis only — use banner buttons to write documents'}
+              ? '闲聊只分析；改设计请点「修订开发设计」或直接说「更新开发设计」'
+              : 'Chat is analysis only — use “Revise design” or say “update Dev Spec”'}
           </span>
           <button
             onClick={() =>
@@ -302,6 +309,41 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
           >
             📄 {t.extractReqBtn}
           </button>
+          {canDesign && (
+            <button
+              type="button"
+              disabled={!!isSending}
+              onClick={() => {
+                const custom =
+                  inputPrompt.trim() ||
+                  (lang === 'zh'
+                    ? hasDesign
+                      ? '请结合当前对话与关联仓库源码摘要，修订并写回完整开发设计文档。'
+                      : '请基于关联仓库源码摘要与当前讨论，撰写完整开发设计。'
+                    : hasDesign
+                      ? 'Revise the Dev Spec from this discussion and associated repo excerpts; write back the full document.'
+                      : 'Write a complete Dev Spec from associated repo excerpts and this discussion.');
+                void handleSendMessage(custom, { forceSpecSync: true });
+              }}
+              className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText} disabled:opacity-50`}
+              title={
+                lang === 'zh'
+                  ? '会读取源码摘要并覆盖更新「开发设计」页文档'
+                  : 'Reads source excerpts and overwrites the Dev Spec document'
+              }
+            >
+              <span className="inline-flex items-center gap-1">
+                <FileText className="w-3 h-3" />
+                {lang === 'zh'
+                  ? hasDesign
+                    ? '修订开发设计'
+                    : '生成开发设计'
+                  : hasDesign
+                    ? 'Revise design'
+                    : 'Generate design'}
+              </span>
+            </button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -312,8 +354,12 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
             placeholder={
               lang === 'zh'
-                ? '输入问题或讨论点（不会自动改文档）…'
-                : 'Ask or discuss (will not auto-update documents)…'
+                ? canDesign
+                  ? '讨论点直接发；若要写回设计，说「更新开发设计」或点「修订开发设计」…'
+                  : '输入问题或讨论点（不会自动改文档）…'
+                : canDesign
+                  ? 'Discuss freely; to write the design say “update Dev Spec” or tap Revise…'
+                  : 'Ask or discuss (will not auto-update documents)…'
             }
             className={`flex-1 px-4 py-2.5 border rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
           />
