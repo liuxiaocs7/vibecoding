@@ -218,42 +218,33 @@ func (s *Server) handleSplitIssue(w http.ResponseWriter, r *http.Request) {
 	var body specRequestBody
 	_ = decodeJSON(r, &body)
 
-	proj, _ := s.Store.GetProject(issue.ProjectID)
 	cfg, _ := s.resolveModel(issue.ProjectID)
-	repoDesc := issueRepoDesc(issue, proj)
 
-	system := `You are a Senior VibeCoding AI Architect.
-Split a LARGE product requirement into ordered, independently implementable sub-requirements.
+	system := `You are a Senior VibeCoding product analyst.
+Split a LARGE product requirement into ordered sub-requirements (what to build), NOT development specs.
 
 Return ONLY a JSON object (no markdown fences) with:
 - chatReply: short natural-language reply (2-8 sentences)
-- overviewMarkdown: parent overview Dev Spec in Markdown listing the split and overall architecture
+- overviewMarkdown: parent requirement overview listing the split (goals/scope only)
 - title: parent title
-- subRequirements: array of 2-8 items, each:
+- subRequirements: array of 2-8 items, each with ONLY:
   - title, description
-  - rawMarkdown: COMPLETE Dev Spec for THAT sub-requirement only (Markdown with Title, Summary, Architecture, Target Files, Implementation Steps, Test Cases)
-  - summary, architectureDesign
-  - fileChanges: [{filePath, repoName, action(create|modify|delete), summary}]
-  - implementationSteps, testCases
+  - optional id
 
 Rules:
-- Order subRequirements by implementation sequence (dependencies first).
-- Each sub-requirement must be small enough for one Auto-Dev coding pass.
-- Do not overlap file ownership unless a later sub must extend an earlier one.
-- Use exact repo names from context. Relative file paths only.
-- If the user already provided a Dev Spec, reuse and partition it rather than inventing unrelated work.`
+- Order by implementation/dependency sequence.
+- Do NOT include architecture, fileChanges, implementationSteps, or Dev Spec markdown per sub.
+- Each slice should later get its own Dev Spec in a separate step.`
 
-	prev := ""
-	if issue.DevSpec != nil {
-		prev = issue.DevSpec.RawMarkdown
+	prevReq := ""
+	if issue.ReqDoc != nil {
+		prevReq = issue.ReqDoc.RawMarkdown
 	}
-	prompt := resumeUserPrompt(body, "请将当前需求拆分成若干可独立实施的子需求，每个子需求一份完整待开发文档，按实施顺序排列。")
+	prompt := resumeUserPrompt(body, "请将当前需求拆分成若干可独立实施的子需求（只要标题与说明，不要写开发设计），按实施顺序排列。")
 	user := fmt.Sprintf(`Issue title: %s
 Description: %s
-Repos:
-%s
 
-Previous Dev Spec Markdown (may be empty):
+Previous Requirement Markdown (may be empty):
 -----
 %s
 -----
@@ -261,14 +252,14 @@ Previous Dev Spec Markdown (may be empty):
 Latest user message:
 %s
 
-Split into ordered sub-requirements and return JSON.`,
-		issue.Title, issue.PromptDescription(), repoDesc, prev, prompt)
+Split into ordered requirement slices and return JSON.`,
+		issue.Title, issue.PromptDescription(), prevReq, prompt)
 
 	msgs := recentChatMsgs(body.Messages)
 	msgs = append(msgs, llm.ChatMessage{Role: "user", Content: user})
 
 	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
-		split, err := llm.ParseSplitJSON(text, issue.Title)
+		split, err := llm.ParseReqSplitJSON(text, issue.Title)
 		if err != nil {
 			return nil, err
 		}
@@ -277,10 +268,19 @@ Split into ordered sub-requirements and return JSON.`,
 				split.SubRequirements[i].ID = "sub-" + uuid.NewString()[:8]
 			}
 			split.SubRequirements[i].Order = i + 1
+			split.SubRequirements[i].DevSpec = nil
+			split.SubRequirements[i].Status = model.SubReqPending
 		}
 		issue.SubRequirements = split.SubRequirements
-		issue.DevSpec = split.OverviewSpec
 		issue.CurrentSubID = ""
+		// Overview becomes / refreshes the requirement doc (clears accept).
+		issue.ReqDoc = &model.ReqDoc{
+			Title:       issue.Title,
+			RawMarkdown: split.OverviewMarkdown,
+			UpdatedAt:   model.NowISO(),
+		}
+		issue.TouchReqDoc()
+		issue.DocPhase = model.DocPhaseRequirement
 		issue.NormalizeSubs()
 		issue.UpdatedAt = model.NowISO()
 		if err := s.Store.UpsertIssue(*issue); err != nil {
@@ -290,7 +290,7 @@ Split into ordered sub-requirements and return JSON.`,
 		if saved != nil {
 			issue = saved
 		}
-		return specDonePayload(issue.DevSpec, split.ChatReply, text, issue), nil
+		return reqDocDonePayload(issue.ReqDoc, split.ChatReply, text, issue), nil
 	})
 }
 
@@ -306,230 +306,22 @@ func (s *Server) handleGenerateSpec(w http.ResponseWriter, r *http.Request) {
 
 	proj, _ := s.Store.GetProject(issue.ProjectID)
 	cfg, _ := s.resolveModel(issue.ProjectID)
-	repoDesc := issueRepoDesc(issue, proj)
-
-	scope := strings.ToLower(strings.TrimSpace(body.Scope))
-	subID := strings.TrimSpace(body.SubRequirementID)
-	updateAll := issue.HasSubRequirements() && (scope == "all" || (scope == "" && subID == ""))
-	updateOne := issue.HasSubRequirements() && subID != "" && !updateAll
-	if updateOne && issue.SubByID(subID) == nil {
-		writeErr(w, 400, "sub-requirement not found")
-		return
-	}
 
 	msgs := recentChatMsgs(body.Messages)
 	prompt := resumeUserPrompt(body, "")
+	subID := strings.TrimSpace(body.SubRequirementID)
+	scope := strings.ToLower(strings.TrimSpace(body.Scope))
 
-	switch {
-	case updateAll:
-		s.generateAllSubSpecs(w, r, cfg, issue, repoDesc, prompt, msgs)
-	case updateOne:
-		s.generateOneSubSpec(w, r, cfg, issue, repoDesc, subID, prompt, msgs)
-	default:
-		s.generateParentSpec(w, r, cfg, issue, repoDesc, prompt, msgs)
-	}
-}
-
-func (s *Server) generateParentSpec(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, issue *model.Issue, repoDesc, prompt string, msgs []llm.ChatMessage) {
-	system := `You are a Senior VibeCoding AI Architect assisting via chat.
-Each user message should UPDATE the Development Spec document.
-
-Return ONLY a JSON object (no markdown fences) with:
-- chatReply: short natural-language reply to the user (what you understood / changed); 2-8 sentences; NOT the full document
-- rawMarkdown: the COMPLETE updated Dev Spec in Markdown (this is the stored document). Include:
-  # Title
-  ## Executive Summary / 概述
-  ## Architecture Design / 架构设计
-  ## Target Files & Changes / 修改文件
-  ## Implementation Steps / 实施步骤
-  ## Test Cases / 测试用例
-- title: short title
-Optional agent fields aligned with the markdown:
-- summary, architectureDesign
-- fileChanges: [{filePath, repoName, action(create|modify|delete), summary}]
-- implementationSteps, testCases
-
-Rules:
-- If a previous Dev Spec is provided, revise it in place based on the latest user message; do not discard unrelated sections.
-- Use exact repo names from context. Relative file paths only.`
-
-	prevSpec := ""
-	if issue.DevSpec != nil && strings.TrimSpace(issue.DevSpec.RawMarkdown) != "" {
-		prevSpec = issue.DevSpec.RawMarkdown
-	}
-	user := fmt.Sprintf(`Issue title: %s
-Description: %s
-Repos:
-%s
-
-Previous Dev Spec Markdown (may be empty):
------
-%s
------
-
-Latest user message:
-%s
-
-Update the Dev Spec accordingly and return JSON with chatReply + rawMarkdown.`,
-		issue.Title, issue.PromptDescription(), repoDesc, prevSpec, prompt)
-	msgs = append(append([]llm.ChatMessage{}, msgs...), llm.ChatMessage{Role: "user", Content: user})
-
-	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
-		spec, chatReply, err := llm.ParseDevSpecJSON(text, issue.Title)
-		if err != nil {
-			return nil, err
-		}
-		issue.DevSpec = spec
-		if err := s.Store.UpsertIssue(*issue); err != nil {
-			return nil, err
-		}
-		return specDonePayload(spec, chatReply, text, issue), nil
-	})
-}
-
-func (s *Server) generateOneSubSpec(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, issue *model.Issue, repoDesc, subID, prompt string, msgs []llm.ChatMessage) {
-	sub := issue.SubByID(subID)
-	if sub == nil {
-		writeErr(w, 400, "sub-requirement not found")
+	// Design is always scoped: one parent OR one sub — never all subs at once.
+	if issue.HasSubRequirements() && (scope == "all" || (scope == "" && subID == "")) {
+		writeErr(w, 400, "pick a sub-requirement to generate design (one scope per request)")
 		return
 	}
-	system := `You are a Senior VibeCoding AI Architect.
-Update ONE sub-requirement's Dev Spec. Do not rewrite sibling sub-requirements.
-
-Return ONLY a JSON object (no markdown fences) with:
-- chatReply: short natural-language reply (2-8 sentences)
-- rawMarkdown: COMPLETE updated Dev Spec for THIS sub-requirement
-- title, summary, architectureDesign
-- fileChanges: [{filePath, repoName, action(create|modify|delete), summary}]
-- implementationSteps, testCases
-
-Rules:
-- Revise in place; keep unrelated sections.
-- Stay within this sub-requirement's scope. Use exact repo names. Relative paths only.`
-
-	prev := ""
-	if sub.DevSpec != nil {
-		prev = sub.DevSpec.RawMarkdown
+	if issue.HasSubRequirements() && subID == "" && scope != "" && scope != "all" {
+		subID = scope
 	}
-	user := fmt.Sprintf(`Parent issue: %s
-Parent description: %s
-Repos:
-%s
 
-Sibling sub-requirements (context only, do not rewrite them):
-%s
-
-THIS sub-requirement id=%s title=%s
-Description: %s
-
-Previous Dev Spec Markdown (may be empty):
------
-%s
------
-
-Latest user message:
-%s
-
-Update THIS sub-requirement Dev Spec and return JSON.`,
-		issue.Title, issue.PromptDescription(), repoDesc, subIndexMarkdown(issue),
-		sub.ID, sub.Title, sub.Description, prev, prompt)
-	msgs = append(append([]llm.ChatMessage{}, msgs...), llm.ChatMessage{Role: "user", Content: user})
-
-	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
-		spec, chatReply, err := llm.ParseDevSpecJSON(text, sub.Title)
-		if err != nil {
-			return nil, err
-		}
-		target := issue.SubByID(subID)
-		if target == nil {
-			return nil, fmt.Errorf("sub-requirement not found")
-		}
-		target.DevSpec = spec
-		if spec.Title != "" {
-			target.Title = spec.Title
-		}
-		if target.Status != model.SubReqInProgress && target.Status != model.SubReqDone {
-			target.Status = model.SubReqReady
-		}
-		issue.UpdatedAt = model.NowISO()
-		if err := s.Store.UpsertIssue(*issue); err != nil {
-			return nil, err
-		}
-		saved, _ := s.Store.GetIssue(issue.ID)
-		if saved != nil {
-			issue = saved
-		}
-		return specDonePayload(spec, chatReply, text, issue), nil
-	})
-}
-
-func (s *Server) generateAllSubSpecs(w http.ResponseWriter, r *http.Request, cfg model.ModelConfig, issue *model.Issue, repoDesc, prompt string, msgs []llm.ChatMessage) {
-	system := `You are a Senior VibeCoding AI Architect.
-A GLOBAL user instruction must be applied to ALL sub-requirement Dev Specs (and the parent overview).
-
-Return ONLY a JSON object (no markdown fences) with:
-- chatReply: short natural-language reply (2-8 sentences)
-- overviewMarkdown: updated parent overview Markdown
-- title: parent title
-- subRequirements: array covering EVERY existing sub-requirement:
-  - id: MUST match the existing sub id
-  - title, description
-  - rawMarkdown: COMPLETE updated Dev Spec for that sub
-  - summary, architectureDesign, fileChanges, implementationSteps, testCases
-
-Rules:
-- Apply the global instruction to every sub-spec; keep each sub's distinct scope.
-- Do not drop a sub-requirement or change ids.
-- Use exact repo names. Relative paths only.`
-
-	user := fmt.Sprintf(`Parent issue: %s
-Parent description: %s
-Repos:
-%s
-
-Existing sub-requirements:
-%s
-
-Parent overview Markdown:
------
-%s
------
-
-All current sub-requirement Dev Specs:
-%s
-
-Latest GLOBAL user message (apply to ALL sub-specs):
-%s
-
-Return JSON with overviewMarkdown + subRequirements (same ids).`,
-		issue.Title, issue.PromptDescription(), repoDesc, subIndexMarkdown(issue),
-		func() string {
-			if issue.DevSpec != nil {
-				return issue.DevSpec.RawMarkdown
-			}
-			return ""
-		}(),
-		allSubSpecsMarkdown(issue), prompt)
-	msgs = append(append([]llm.ChatMessage{}, msgs...), llm.ChatMessage{Role: "user", Content: user})
-
-	s.streamOrCompleteJSON(w, r, cfg, system, msgs, func(text string) (any, error) {
-		parsed, err := llm.ParseMultiSubSpecJSON(text, issue.Title)
-		if err != nil {
-			return nil, err
-		}
-		llm.ApplyMultiSubSpec(issue, parsed)
-		issue.UpdatedAt = model.NowISO()
-		if err := s.Store.UpsertIssue(*issue); err != nil {
-			return nil, err
-		}
-		saved, _ := s.Store.GetIssue(issue.ID)
-		if saved != nil {
-			issue = saved
-		}
-		reply := parsed.ChatReply
-		spec := issue.DevSpec
-		return specDonePayload(spec, reply, text, issue), nil
-	})
+	s.generateDesignWithSource(w, r, cfg, issue, proj, subID, prompt, msgs)
 }
 
 func (s *Server) handleExportSpec(w http.ResponseWriter, r *http.Request) {

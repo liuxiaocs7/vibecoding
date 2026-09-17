@@ -27,11 +27,14 @@ type SpecStreamBody = {
 };
 
 type SpecStreamResult = {
-  spec: DevSpec;
+  spec?: DevSpec;
+  reqDoc?: import('../types').ReqDoc;
   text: string;
   chatReply?: string;
   process?: string;
   subRequirements?: Issue['subRequirements'];
+  docPhase?: import('../types').DocPhase;
+  sourceFilesRead?: number;
 };
 
 async function streamSpec(
@@ -65,11 +68,14 @@ async function streamSpec(
       streamError = ev.error || 'stream error';
     } else if (ev.type === 'done') {
       result = {
-        spec: ev.spec as DevSpec,
+        spec: ev.spec as DevSpec | undefined,
+        reqDoc: (ev as { reqDoc?: import('../types').ReqDoc }).reqDoc,
         text: (ev.chatReply || ev.text || '') as string,
         chatReply: (ev.chatReply || ev.text || '') as string,
         process: (ev.process || '') as string,
         subRequirements: (ev.subRequirements as Issue['subRequirements']) || undefined,
+        docPhase: (ev as { docPhase?: import('../types').DocPhase }).docPhase,
+        sourceFilesRead: (ev as { sourceFilesRead?: number }).sourceFilesRead,
       };
     }
   });
@@ -200,6 +206,18 @@ export const api = {
     body: SpecStreamBody,
     opts?: { signal?: AbortSignal; onDelta?: (chunk: string) => void; onStatus?: (msg: string) => void }
   ) => streamSpec(`/api/issues/${issueId}/spec?stream=1`, body, opts),
+
+  generateReqDocStream: (
+    issueId: string,
+    body: SpecStreamBody,
+    opts?: { signal?: AbortSignal; onDelta?: (chunk: string) => void; onStatus?: (msg: string) => void }
+  ) => streamSpec(`/api/issues/${issueId}/req-doc?stream=1`, body, opts),
+
+  acceptRequirement: (issueId: string) =>
+    request<Issue>(`/api/issues/${issueId}/accept-requirement`, {
+      method: 'POST',
+      body: '{}',
+    }),
 
   splitIssueStream: (
     issueId: string,
