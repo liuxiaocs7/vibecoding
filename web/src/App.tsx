@@ -27,6 +27,8 @@ import {
 } from 'lucide-react';
 import { isDesktopApp, toggleDesktopMaximize } from './lib/desktop';
 
+const LOGO_MARK = '/logo-mark.png';
+
 const DEFAULT_MODEL: ModelConfig = {
   useCustomOpenAI: true,
   openAIBaseUrl: 'https://api.openai.com/v1/chat/completions',
@@ -466,8 +468,12 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex h-screen w-screen items-center justify-center bg-slate-950 text-slate-200">
-        <Loader2 className="w-6 h-6 animate-spin mr-2" /> {t.loadingApp}
+      <div className="flex h-screen w-screen flex-col items-center justify-center bg-slate-950 text-slate-200 gap-3">
+        <img src={LOGO_MARK} alt="Vibecoding" className="w-16 h-16 object-contain" />
+        <div className="text-base font-bold tracking-tight">Vibecoding</div>
+        <div className="flex items-center text-xs text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin mr-2" /> {t.loadingApp}
+        </div>
       </div>
     );
   }
@@ -504,11 +510,13 @@ export default function App() {
       <aside className={`w-64 border-r flex flex-col justify-between shrink-0 z-20 ${themeConfig.sidebarBg} transition-colors duration-300`}>
         <div>
           <div className={`p-6 flex items-center justify-between border-b ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
-            <div className="flex items-center space-x-3">
-              <div className="w-9 h-9 bg-gradient-to-tr from-indigo-500 to-purple-500 rounded-xl flex items-center justify-center font-bold text-xl text-white shadow-lg shadow-indigo-500/30">
-                V
-              </div>
-              <div>
+            <div className="flex items-center space-x-3 min-w-0">
+              <img
+                src={LOGO_MARK}
+                alt="Vibecoding"
+                className="w-9 h-9 object-contain shrink-0"
+              />
+              <div className="min-w-0">
                 <span className={`text-base font-bold tracking-tight block ${themeConfig.textPrimary}`}>Vibecoding</span>
                 <span className={`text-[10px] uppercase tracking-widest font-mono ${themeConfig.textMuted}`}>
                   {t.subtitle}
