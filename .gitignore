@@ -18,6 +18,14 @@ __debug_bin*
 # Release / packaging (make release → dist/release/)
 /dist/
 
+# Wails desktop packaging output (keep build/appicon.png)
+/build/bin/
+/build/darwin/
+/build/windows/
+/build/linux/
+/web/wailsjs/
+/web/package.json.md5
+
 # Frontend build + deps (Vite)
 /web/node_modules/
 /web/dist/
