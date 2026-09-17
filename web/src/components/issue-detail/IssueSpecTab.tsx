@@ -1,12 +1,13 @@
-import React from 'react';
-import { Issue, SubRequirement, DevSpec, PendingLLMSession } from '../../types';
-import { Language, ThemeStyle } from '../../lib/i18n';
+import React, { useState } from 'react';
+import { Issue, SubRequirement, DevSpec, PendingLLMSession, SpecFileChange } from '../../types';
+import { Language, ThemeStyle, getTranslation } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { MarkdownView } from '../../lib/markdown';
 import { SubRequirementBar } from '../SubRequirementBar';
-import { FileText, Sparkles, Loader2, Download, Edit3 } from 'lucide-react';
+import { FileText, Sparkles, Loader2, Download, Edit3, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { LLMRecoveryBar } from './LLMRecoveryBar';
 import { SendMessageOpts } from './useIssueChat';
+import { requirementAccepted, hasReqDoc } from '../../lib/subreq';
 
 interface IssueSpecTabProps {
   issue: Issue;
@@ -21,6 +22,8 @@ interface IssueSpecTabProps {
   setEditingSpec: React.Dispatch<React.SetStateAction<boolean>>;
   specMarkdown: string;
   setSpecMarkdown: (value: string) => void;
+  reqMarkdown: string;
+  setReqMarkdown: (value: string) => void;
   exporting: boolean;
   exportHint: string;
   chatError: string;
@@ -47,6 +50,8 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   setEditingSpec,
   specMarkdown,
   setSpecMarkdown,
+  reqMarkdown,
+  setReqMarkdown,
   exporting,
   exportHint,
   chatError,
@@ -60,6 +65,12 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   onRegenerate,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.glass;
+  const t = getTranslation(lang);
+  const [docPane, setDocPane] = useState<'req' | 'design'>(
+    hasReqDoc(issue) && !requirementAccepted(issue) ? 'req' : 'design'
+  );
+  const [editingReq, setEditingReq] = useState(false);
+  const changes: SpecFileChange[] = currentSpec?.fileChanges || [];
 
   return (
     <div className="flex-1 p-6 overflow-y-auto space-y-4">
@@ -75,6 +86,35 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
           themeStyle={themeStyle}
         />
       )}
+      <div className="flex items-center gap-2 text-[11px]">
+        <button
+          type="button"
+          onClick={() => setDocPane('req')}
+          className={`px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+            docPane === 'req'
+              ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-800 dark:text-cyan-200'
+              : `${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`
+          }`}
+        >
+          {t.docTabReq}
+          {issue.reqDoc?.acceptedAt && requirementAccepted(issue) && (
+            <CheckCircle2 className="inline w-3 h-3 ml-1 text-emerald-500" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setDocPane('design')}
+          className={`px-3 py-1.5 rounded-lg border font-semibold transition-colors ${
+            docPane === 'design'
+              ? 'border-amber-500/50 bg-amber-500/15 text-amber-900 dark:text-amber-200'
+              : `${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`
+          }`}
+        >
+          {t.docTabDesign}
+        </button>
+      </div>
+      <p className={`text-[11px] ${themeConfig.textMuted}`}>{t.sourceScanNotice}</p>
+
       {isSending && (
         <div className="flex items-center gap-2 text-xs text-indigo-600 dark:text-indigo-300">
           <Loader2 className="w-4 h-4 animate-spin" />
@@ -92,87 +132,171 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
         onRetrySession={() => onRetrySession?.()}
         onRegenerate={() => onRegenerate?.()}
       />
-      {!currentSpec?.rawMarkdown && !currentSpec?.summary ? (
+
+      {docPane === 'req' ? (
+        !issue.reqDoc?.rawMarkdown ? (
+          <div className={`p-12 text-center border-2 border-dashed rounded-2xl ${themeConfig.subtleBorder} ${themeConfig.cardBg}`}>
+            <FileText className={`w-12 h-12 mx-auto mb-3 ${themeConfig.textMuted}`} />
+            <h3 className={`text-base font-semibold ${themeConfig.textPrimary}`}>{t.noReqDocYet}</h3>
+            <p className={`text-xs max-w-md mx-auto mt-1 mb-4 ${themeConfig.textMuted}`}>{t.noReqDocHint}</p>
+            <button
+              onClick={() => {
+                setActiveTab('chat');
+                handleSendMessage(
+                  lang === 'zh'
+                    ? '请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收标准、约束）。'
+                    : 'Extract a complete requirement document.',
+                  { forceReqDoc: true }
+                );
+              }}
+              className="px-5 py-2.5 bg-cyan-600 hover:bg-cyan-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
+            >
+              <Sparkles className="w-4 h-4" />
+              {t.extractReqBtn}
+            </button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => {
+                  if (!editingReq) setReqMarkdown(issue.reqDoc?.rawMarkdown || '');
+                  setEditingReq(!editingReq);
+                }}
+                className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+              >
+                <Edit3 className="w-3.5 h-3.5 text-cyan-500" />
+                {editingReq ? (lang === 'zh' ? '退出编辑' : 'Cancel') : lang === 'zh' ? '编辑' : 'Edit'}
+              </button>
+            </div>
+            {editingReq ? (
+              <div className="space-y-2">
+                <textarea
+                  value={reqMarkdown}
+                  onChange={(e) => setReqMarkdown(e.target.value)}
+                  spellCheck={false}
+                  className={`min-h-[360px] w-full p-4 border rounded-xl font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                />
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => {
+                      setReqMarkdown(issue.reqDoc?.rawMarkdown || '');
+                      setEditingReq(false);
+                    }}
+                    className={`px-3 py-1.5 text-xs rounded-lg border ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+                  >
+                    {lang === 'zh' ? '取消' : 'Cancel'}
+                  </button>
+                  <button
+                    onClick={() => {
+                      const now = new Date().toISOString();
+                      onUpdateIssue({
+                        ...issue,
+                        reqDoc: {
+                          ...(issue.reqDoc || { rawMarkdown: '' }),
+                          rawMarkdown: reqMarkdown,
+                          updatedAt: now,
+                          // editing clears acceptance until re-accept
+                          acceptedAt: undefined,
+                        },
+                        docPhase: 'requirement',
+                        updatedAt: now,
+                      });
+                      setEditingReq(false);
+                    }}
+                    className="px-3 py-1.5 text-xs rounded-lg bg-cyan-600 text-white font-semibold"
+                  >
+                    {lang === 'zh' ? '保存' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <MarkdownView text={issue.reqDoc.rawMarkdown} />
+            )}
+          </div>
+        )
+      ) : !currentSpec?.rawMarkdown && !currentSpec?.summary ? (
         <div className={`p-12 text-center border-2 border-dashed rounded-2xl ${themeConfig.subtleBorder} ${themeConfig.cardBg}`}>
           <FileText className={`w-12 h-12 mx-auto mb-3 ${themeConfig.textMuted}`} />
-          <h3 className={`text-base font-semibold ${themeConfig.textPrimary}`}>暂未生成待开发文档 (Dev Spec)</h3>
+          <h3 className={`text-base font-semibold ${themeConfig.textPrimary}`}>
+            {lang === 'zh' ? '暂未生成开发设计 (Dev Spec)' : 'No Dev Spec yet'}
+          </h3>
           <p className={`text-xs max-w-md mx-auto mt-1 mb-4 ${themeConfig.textMuted}`}>
-            在【AI 对话】中发送需求说明即可自动写入 Markdown 文档，无需再点生成按钮。
+            {lang === 'zh'
+              ? '确认需求后，点击「基于源码生成设计」。会读取关联仓库摘要发给模型。'
+              : 'After accepting the requirement, generate design from local source excerpts.'}
           </p>
           <button
             onClick={() => {
               setActiveTab('chat');
               handleSendMessage(
                 lang === 'zh'
-                  ? '请根据当前需求，撰写完整的待开发文档（Markdown）。'
-                  : 'Please write a complete Markdown Dev Spec from the current requirement.'
+                  ? '请基于关联仓库源码摘要，撰写完整开发设计。'
+                  : 'Write a complete Dev Spec from local source excerpts.',
+                {
+                  forceSpecSync: true,
+                  scope: splitIssue && selectedScope !== 'all' ? selectedScope : undefined,
+                }
               );
             }}
             className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
           >
             <Sparkles className="w-4 h-4" />
-            {lang === 'zh' ? '去对话并写入文档' : 'Chat to write Spec'}
+            {t.extractSpecBtn}
           </button>
         </div>
       ) : (
         <div className="space-y-4 h-full flex flex-col min-h-0">
           <div className={`pb-3 border-b shrink-0 space-y-2 ${themeConfig.subtleBorder}`}>
             <div className="flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h3 className={`text-base font-bold truncate ${themeConfig.textPrimary}`}>
-                {currentSpec?.title ||
-                  activeSub?.title ||
-                  (selectedScope === 'all' && splitIssue
+              <div className="min-w-0">
+                <h3 className={`text-base font-bold truncate ${themeConfig.textPrimary}`}>
+                  {currentSpec?.title ||
+                    activeSub?.title ||
+                    (selectedScope === 'all' && splitIssue
+                      ? lang === 'zh'
+                        ? '总览文档'
+                        : 'Overview'
+                      : lang === 'zh'
+                        ? '开发设计'
+                        : 'Dev Spec')}
+                </h3>
+                <p className={`text-[11px] mt-0.5 ${themeConfig.textMuted}`}>
+                  Markdown · {lang === 'zh' ? '更新' : 'Updated'}{' '}
+                  {currentSpec?.updatedAt ? new Date(currentSpec.updatedAt).toLocaleString() : '—'}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleExportDevSpec}
+                  disabled={exporting}
+                  className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+                >
+                  {exporting ? (
+                    <Loader2 className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
+                  ) : (
+                    <Download className="w-3.5 h-3.5 text-emerald-500" />
+                  )}
+                  {exporting ? (lang === 'zh' ? '保存中…' : 'Saving…') : lang === 'zh' ? '导出下载' : 'Export'}
+                </button>
+                <button
+                  onClick={() => {
+                    if (!editingSpec) setSpecMarkdown(currentSpec?.rawMarkdown || '');
+                    setEditingSpec(!editingSpec);
+                  }}
+                  className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
+                >
+                  <Edit3 className="w-3.5 h-3.5 text-indigo-500" />
+                  {editingSpec
                     ? lang === 'zh'
-                      ? '总览文档'
-                      : 'Overview'
+                      ? '退出编辑'
+                      : 'Cancel'
                     : lang === 'zh'
-                    ? '待开发文档'
-                    : 'Dev Spec')}
-              </h3>
-              <p className={`text-[11px] mt-0.5 ${themeConfig.textMuted}`}>
-                Markdown · {lang === 'zh' ? '更新' : 'Updated'}{' '}
-                {currentSpec?.updatedAt ? new Date(currentSpec.updatedAt).toLocaleString() : '—'}
-              </p>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <button
-                type="button"
-                onClick={handleExportDevSpec}
-                disabled={exporting}
-                className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50 ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
-                title={lang === 'zh' ? '导出 Markdown 文件' : 'Export Markdown file'}
-              >
-                {exporting ? (
-                  <Loader2 className="w-3.5 h-3.5 text-emerald-500 animate-spin" />
-                ) : (
-                  <Download className="w-3.5 h-3.5 text-emerald-500" />
-                )}
-                {exporting
-                  ? lang === 'zh'
-                    ? '保存中…'
-                    : 'Saving…'
-                  : lang === 'zh'
-                  ? '导出下载'
-                  : 'Export'}
-              </button>
-              <button
-                onClick={() => {
-                  if (!editingSpec) setSpecMarkdown(currentSpec?.rawMarkdown || '');
-                  setEditingSpec(!editingSpec);
-                }}
-                className={`px-3 py-1.5 border font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
-              >
-                <Edit3 className="w-3.5 h-3.5 text-indigo-500" />
-                {editingSpec
-                  ? lang === 'zh'
-                    ? '退出编辑'
-                    : 'Cancel'
-                  : lang === 'zh'
-                  ? '编辑 Markdown'
-                  : 'Edit Markdown'}
-              </button>
-            </div>
+                      ? '编辑 Markdown'
+                      : 'Edit Markdown'}
+                </button>
+              </div>
             </div>
             {exportHint && (
               <div className="text-[11px] text-emerald-600 dark:text-emerald-400 select-text break-all">
@@ -180,6 +304,36 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
               </div>
             )}
           </div>
+
+          {changes.length > 0 && (
+            <div className={`rounded-xl border p-3 space-y-2 ${themeConfig.cardBg}`}>
+              <div className={`text-xs font-bold ${themeConfig.textPrimary}`}>{t.changeMapTitle}</div>
+              <ul className="space-y-1.5">
+                {changes.map((ch, i) => (
+                  <li
+                    key={`${ch.repoName}-${ch.filePath}-${i}`}
+                    className={`flex items-start gap-2 text-[11px] font-mono ${themeConfig.textSecondary}`}
+                  >
+                    {ch.verified || ch.action === 'create' ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" />
+                    ) : (
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" />
+                    )}
+                    <span>
+                      <span className="font-semibold">[{ch.action}]</span> {ch.repoName}/{ch.filePath}
+                      {ch.symbol ? ` · ${ch.symbol}` : ''}
+                      <span className="ml-2 opacity-70">
+                        {ch.action === 'create' || ch.verified ? t.verifiedBadge : t.unverifiedBadge}
+                      </span>
+                      {ch.summary ? (
+                        <span className={`block font-sans opacity-80 ${themeConfig.textMuted}`}>{ch.summary}</span>
+                      ) : null}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           {editingSpec ? (
             <div className="space-y-3 flex-1 flex flex-col min-h-0">
@@ -219,25 +373,25 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                         subRequirements: (issue.subRequirements || []).map((s) =>
                           s.id === activeSub.id ? { ...s, title: nextSpec.title, devSpec: nextSpec } : s
                         ),
+                        updatedAt: new Date().toISOString(),
                       });
                     } else {
                       onUpdateIssue({
                         ...issue,
                         devSpec: nextSpec,
+                        updatedAt: new Date().toISOString(),
                       });
                     }
                     setEditingSpec(false);
                   }}
-                  className="px-4 py-1.5 bg-indigo-600 text-xs text-white font-semibold rounded-lg"
+                  className="px-3 py-1.5 text-xs rounded-lg bg-indigo-600 text-white font-semibold"
                 >
                   {lang === 'zh' ? '保存' : 'Save'}
                 </button>
               </div>
             </div>
           ) : (
-            <div className={`flex-1 p-5 rounded-xl border overflow-y-auto ${themeConfig.cardBg} ${themeConfig.cardBorder} ${themeConfig.textPrimary}`}>
-              <MarkdownView text={currentSpec?.rawMarkdown || currentSpec?.summary || ''} />
-            </div>
+            <MarkdownView text={currentSpec?.rawMarkdown || ''} />
           )}
         </div>
       )}

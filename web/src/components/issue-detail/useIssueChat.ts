@@ -11,7 +11,10 @@ export type ModelProcessState = {
 };
 
 export type SendMessageOpts = {
+  /** Explicitly generate / update Dev Spec (design) from source. */
   forceSpecSync?: boolean;
+  /** Explicitly extract / update requirement document. */
+  forceReqDoc?: boolean;
   split?: boolean;
   scope?: string;
   resume?: 'session' | 'fresh';
@@ -40,6 +43,7 @@ export function useIssueChat(params: {
   selectedScope: string;
   setSelectedScope: (scope: string) => void;
   setSpecMarkdown: (md: string) => void;
+  setReqMarkdown?: (md: string) => void;
   onUpdateIssue: (updatedIssue: Issue) => void;
   modelConfig: ModelConfig;
   projectId?: string;
@@ -52,6 +56,7 @@ export function useIssueChat(params: {
     selectedScope,
     setSelectedScope,
     setSpecMarkdown,
+    setReqMarkdown,
     onUpdateIssue,
     modelConfig,
     projectId,
@@ -128,12 +133,10 @@ export function useIssueChat(params: {
     const ac = new AbortController();
     abortRef.current = ac;
 
-    const syncSpec =
-      opts?.forceSpecSync ||
-      split ||
-      session?.syncSpec ||
-      issue.status === 'requirements' ||
-      issue.status === 'backlog';
+    const syncReqDoc = !!(opts?.forceReqDoc || session?.syncReqDoc);
+    const syncSpec = !!(opts?.forceSpecSync || session?.syncSpec);
+    // Idle chat never rewrites documents — only explicit buttons / resume flags do.
+    const syncDocs = split || syncReqDoc || syncSpec;
 
     const processId = `proc-${Date.now()}`;
     const processAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -193,14 +196,28 @@ export function useIssueChat(params: {
         }
 
         try {
-          if (syncSpec) {
+          if (syncDocs) {
             const streamOpts = {
               signal: ac.signal,
               onDelta: appendDelta,
-              onStatus: () => {
-                if (!streamed) {
-                  patchProcess(lang === 'zh' ? '正在请求模型…' : 'Calling model…', 'running');
-                }
+              onStatus: (msg: string) => {
+                const label =
+                  msg === 'indexing'
+                    ? lang === 'zh'
+                      ? '正在索引关联仓库…'
+                      : 'Indexing associated repos…'
+                    : msg.startsWith('reading')
+                      ? lang === 'zh'
+                        ? `正在读取源码摘要（${msg}）…`
+                        : `Reading source excerpts (${msg})…`
+                      : msg === 'writing_spec'
+                        ? lang === 'zh'
+                          ? '正在撰写开发设计…'
+                          : 'Writing Dev Spec…'
+                        : lang === 'zh'
+                          ? '正在请求模型…'
+                          : 'Calling model…';
+                if (!streamed) patchProcess(label, 'running');
               },
             };
             const body = {
@@ -212,14 +229,33 @@ export function useIssueChat(params: {
               freshStart: freshStart || undefined,
               resume: resumeSession || undefined,
             };
-            const result = split
-              ? await api.splitIssueStream(issue.id, body, streamOpts)
-              : await api.generateSpecStream(issue.id, body, streamOpts);
-            const { spec, text, chatReply, process, subRequirements } = result;
+            let result;
+            if (split) {
+              result = await api.splitIssueStream(issue.id, body, streamOpts);
+            } else if (syncReqDoc) {
+              result = await api.generateReqDocStream(issue.id, body, streamOpts);
+            } else {
+              // Design: must target a sub when split
+              if (splitIssue && !targetingSub) {
+                throw new Error(
+                  lang === 'zh'
+                    ? '请先选择一个子需求再生成开发设计'
+                    : 'Pick a sub-requirement before generating design'
+                );
+              }
+              result = await api.generateSpecStream(issue.id, body, streamOpts);
+            }
+            const { spec, reqDoc, text, chatReply, process, subRequirements, docPhase } = result;
             const reply =
               chatReply ||
               text ||
-              (lang === 'zh' ? '已更新待开发文档。' : 'Dev Spec updated.');
+              (syncReqDoc
+                ? lang === 'zh'
+                  ? '已更新需求文档。'
+                  : 'Requirement document updated.'
+                : lang === 'zh'
+                  ? '已更新开发设计文档。'
+                  : 'Dev Spec updated.');
             patchProcess(process || streamed || text || reply, 'done');
             const aiMsg: ChatMessage = {
               id: `msg-${Date.now() + 1}`,
@@ -230,14 +266,21 @@ export function useIssueChat(params: {
             const nextSubs = subRequirements || tempIssue.subRequirements;
             const saved: Issue = {
               ...mergeChat(tempIssue, [...updatedMessages, aiMsg]),
-              devSpec: spec || tempIssue.devSpec,
+              reqDoc: reqDoc || tempIssue.reqDoc,
+              docPhase: docPhase || tempIssue.docPhase,
+              // Parent design updates issue.devSpec; sub design lives in subRequirements.
+              devSpec:
+                !targetingSub && spec && !syncReqDoc && !split
+                  ? spec
+                  : tempIssue.devSpec,
               subRequirements: nextSubs,
               pendingLlm: undefined,
               updatedAt: new Date().toISOString(),
             };
             setPendingLlm(null);
             onUpdateIssue(saved);
-            if (spec?.rawMarkdown) setSpecMarkdown(spec.rawMarkdown);
+            if (reqDoc?.rawMarkdown) setReqMarkdown?.(reqDoc.rawMarkdown);
+            if (spec?.rawMarkdown && !syncReqDoc && !split) setSpecMarkdown(spec.rawMarkdown);
             if (split) setSelectedScope('all');
             return;
           }
@@ -300,6 +343,7 @@ export function useIssueChat(params: {
           scope,
           split,
           syncSpec,
+          syncReqDoc,
           partial: lastPartial.slice(0, 12000),
           error: message,
           attempts: LLM_AUTO_ATTEMPTS,

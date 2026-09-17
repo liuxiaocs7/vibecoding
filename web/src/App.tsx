@@ -4,7 +4,7 @@ import { loadLanguage, saveLanguage, loadThemeStyle, saveThemeStyle } from './li
 import { Language, ThemeStyle, getTranslation } from './lib/i18n';
 import { THEME_CONFIGS } from './lib/theme';
 import { api, subscribeJobEvents } from './lib/api';
-import { hasSubRequirements, specReadyForDev } from './lib/subreq';
+import { hasSubRequirements, specReadyForDev, hasUnverifiedModifies } from './lib/subreq';
 import { KanbanBoard } from './components/KanbanBoard';
 import { IssueDetailModal, ISSUE_SESSION_DOCK_ID } from './components/IssueDetailModal';
 import { ProjectModal } from './components/ProjectModal';
@@ -374,6 +374,14 @@ export default function App() {
       if (!target.associatedRepoIds?.length) {
         showToast('error', t.backlogNeedsRepo);
         return;
+      }
+      if (hasUnverifiedModifies(target)) {
+        const ok = window.confirm(
+          language === 'zh'
+            ? '开发设计中仍有未核实的修改点。确认仍要进入待执行吗？'
+            : 'Some modify/delete file changes are unverified. Move to backlog anyway?'
+        );
+        if (!ok) return;
       }
     }
     if (newStatus === 'in_review' && !target.prInfo) {

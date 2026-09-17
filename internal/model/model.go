@@ -315,14 +315,15 @@ type IssueAttachment struct {
 // PendingLLMSession remembers a timed-out / failed analysis so the user can
 // retry the same conversation or regenerate from scratch.
 type PendingLLMSession struct {
-	Prompt    string `json:"prompt"`
-	Scope     string `json:"scope,omitempty"`
-	Split     bool   `json:"split,omitempty"`
-	SyncSpec  bool   `json:"syncSpec,omitempty"`
-	Partial   string `json:"partial,omitempty"`
-	Error     string `json:"error,omitempty"`
-	Attempts  int    `json:"attempts,omitempty"`
-	UpdatedAt string `json:"updatedAt,omitempty"`
+	Prompt     string `json:"prompt"`
+	Scope      string `json:"scope,omitempty"`
+	Split      bool   `json:"split,omitempty"`
+	SyncSpec   bool   `json:"syncSpec,omitempty"`
+	SyncReqDoc bool   `json:"syncReqDoc,omitempty"`
+	Partial    string `json:"partial,omitempty"`
+	Error      string `json:"error,omitempty"`
+	Attempts   int    `json:"attempts,omitempty"`
+	UpdatedAt  string `json:"updatedAt,omitempty"`
 }
 
 type Issue struct {

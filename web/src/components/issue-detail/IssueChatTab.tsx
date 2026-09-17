@@ -259,32 +259,33 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
                 ? t.chatUpdatesAll
                 : t.chatUpdatesSub
               : lang === 'zh'
-              ? '对话将直接更新待开发文档'
-              : 'Chat updates the Dev Spec directly'}
+              ? '闲聊只分析；写文档请用阶段横幅上的按钮'
+              : 'Chat is analysis only — use banner buttons to write documents'}
           </span>
           <button
             onClick={() =>
               handleSendMessage(
                 lang === 'zh'
-                  ? '请补充边界条件、异常处理与错误码说明到待开发文档。'
-                  : 'Please add edge cases, error handling, and error codes into the Dev Spec.'
+                  ? '请帮我澄清验收标准与边界条件（只分析，先不要改文档）。'
+                  : 'Help clarify acceptance criteria and edge cases (analysis only, do not rewrite docs).'
               )
             }
             className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
           >
-            🛡️ {lang === 'zh' ? '补全边界与异常' : 'Edge cases'}
+            🛡️ {lang === 'zh' ? '澄清验收与边界' : 'Clarify acceptance'}
           </button>
           <button
             onClick={() =>
               handleSendMessage(
                 lang === 'zh'
-                  ? '请补充更具体的改动文件清单与实施步骤。'
-                  : 'Please refine the file-change list and implementation steps.'
+                  ? '请根据当前讨论提炼完整需求文档（目标、范围、非目标、验收、约束）。'
+                  : 'Extract a complete requirement document from this discussion.',
+                { forceReqDoc: true }
               )
             }
             className={`px-2.5 py-1 rounded-lg border shrink-0 transition-colors ${themeConfig.btnSecondary} ${themeConfig.btnSecondaryText}`}
           >
-            📄 {lang === 'zh' ? '细化改动清单' : 'Refine files'}
+            📄 {t.extractReqBtn}
           </button>
         </div>
 
@@ -296,16 +297,8 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendMessage()}
             placeholder={
               lang === 'zh'
-                ? splitIssue && selectedScope !== 'all'
-                  ? '描述该子需求的修改意见，发送后更新对应文档...'
-                  : splitIssue
-                  ? '全局描述修改意见，发送后同步更新所有子需求文档...'
-                  : '描述需求或修改意见，发送后自动更新待开发文档...'
-                : splitIssue && selectedScope !== 'all'
-                ? 'Describe this sub-requirement — its Dev Spec updates on send...'
-                : splitIssue
-                ? 'Global instruction — every sub-requirement spec updates on send...'
-                : 'Describe requirements or changes — Dev Spec updates on send...'
+                ? '输入问题或讨论点（不会自动改文档）…'
+                : 'Ask or discuss (will not auto-update documents)…'
             }
             className={`flex-1 px-4 py-2.5 border rounded-xl text-xs focus:outline-none focus:border-indigo-500 transition-colors ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
           />
@@ -315,7 +308,7 @@ export const IssueChatTab: React.FC<IssueChatTabProps> = ({
             className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-semibold text-xs rounded-xl flex items-center gap-1.5 transition-all shrink-0"
           >
             <Send className="w-3.5 h-3.5" />
-            {lang === 'zh' ? '发送并更新文档' : 'Send & update'}
+            {lang === 'zh' ? '发送' : 'Send'}
           </button>
         </div>
       </div>

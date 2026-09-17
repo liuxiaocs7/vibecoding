@@ -271,6 +271,7 @@ export interface PendingLLMSession {
   scope?: string;
   split?: boolean;
   syncSpec?: boolean;
+  syncReqDoc?: boolean;
   partial?: string;
   error?: string;
   attempts?: number;

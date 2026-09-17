@@ -68,6 +68,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
   const [editingSpec, setEditingSpec] = useState(false);
 
   const [specMarkdown, setSpecMarkdown] = useState(issue.devSpec?.rawMarkdown || '');
+  const [reqMarkdown, setReqMarkdown] = useState(issue.reqDoc?.rawMarkdown || '');
   const [reworkFeedback, setReworkFeedback] = useState('');
   const [showReworkBox, setShowReworkBox] = useState(false);
   const [editingRepos, setEditingRepos] = useState(false);
@@ -109,6 +110,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     selectedScope,
     setSelectedScope,
     setSpecMarkdown,
+    setReqMarkdown,
     onUpdateIssue,
     modelConfig,
     projectId,
@@ -139,6 +141,12 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
       setSpecMarkdown(spec.rawMarkdown);
     }
   }, [issue.devSpec, issue.subRequirements, selectedScope]);
+
+  useEffect(() => {
+    if (issue.reqDoc?.rawMarkdown) {
+      setReqMarkdown(issue.reqDoc.rawMarkdown);
+    }
+  }, [issue.reqDoc?.rawMarkdown]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -400,6 +408,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
         <StatusFocusBanner
           issue={issue}
           splitIssue={splitIssue}
+          selectedScope={selectedScope}
           associatedRepos={associatedRepos}
           lang={lang}
           setActiveTab={setActiveTab}
@@ -459,6 +468,8 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               setEditingSpec={setEditingSpec}
               specMarkdown={specMarkdown}
               setSpecMarkdown={setSpecMarkdown}
+              reqMarkdown={reqMarkdown}
+              setReqMarkdown={setReqMarkdown}
               exporting={exporting}
               exportHint={exportHint}
               chatError={chatError}
