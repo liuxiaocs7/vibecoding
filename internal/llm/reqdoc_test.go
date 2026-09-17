@@ -25,6 +25,52 @@ func TestParseReqDocJSON(t *testing.T) {
 	if reply != "ok" || doc.Title != "Feature" || !strings.Contains(doc.RawMarkdown, "do X") {
 		t.Fatalf("%+v reply=%q", doc, reply)
 	}
+	if strings.Contains(doc.RawMarkdown, `"chatReply"`) {
+		t.Fatalf("stored JSON envelope as markdown: %s", doc.RawMarkdown)
+	}
+}
+
+func TestParseReqDocJSONTrailingCommaAndExtract(t *testing.T) {
+	raw := `{
+		"chatReply": "已整理需求",
+		"rawMarkdown": "# 孔明下发参数审计需求\n\n### 概述 / Summary\n\n审计记录\n",
+	}`
+	doc, reply, err := ParseReqDocJSON(raw, "Fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply != "已整理需求" {
+		t.Fatalf("reply=%q", reply)
+	}
+	if !strings.Contains(doc.RawMarkdown, "# 孔明下发参数审计需求") {
+		t.Fatalf("md=%s", doc.RawMarkdown)
+	}
+	if strings.Contains(doc.RawMarkdown, `"rawMarkdown"`) {
+		t.Fatalf("envelope leaked: %s", doc.RawMarkdown)
+	}
+}
+
+func TestParseReqDocJSONRawNewlinesInString(t *testing.T) {
+	// Invalid JSON: literal newlines inside the string value.
+	raw := "{\n  \"chatReply\": \"ok\",\n  \"rawMarkdown\": \"# Title\n\n## 概述 / Summary\n\nbody text\"\n}"
+	doc, _, err := ParseReqDocJSON(raw, "Fallback")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(doc.RawMarkdown, "# Title") || !strings.Contains(doc.RawMarkdown, "body text") {
+		t.Fatalf("md=%s", doc.RawMarkdown)
+	}
+	if strings.HasPrefix(strings.TrimSpace(doc.RawMarkdown), "{") {
+		t.Fatalf("still JSON: %s", doc.RawMarkdown)
+	}
+}
+
+func TestCoerceReqMarkdownEnvelope(t *testing.T) {
+	envelope := `{"chatReply":"hi","rawMarkdown":"# Real Doc\n\n## 范围 / Scope\n\n- a\n"}`
+	got := CoerceReqMarkdown(envelope)
+	if !strings.Contains(got, "# Real Doc") || strings.Contains(got, "chatReply") {
+		t.Fatalf("got=%s", got)
+	}
 }
 
 func TestParseWantedFilesJSON(t *testing.T) {

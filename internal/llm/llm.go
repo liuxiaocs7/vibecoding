@@ -333,29 +333,11 @@ func truncate(s string, n int) string {
 }
 
 // ParseDevSpecJSON extracts a DevSpec (+ optional chatReply) from model JSON
-// or treats the whole response as markdown when JSON parsing fails.
+// or recovers Markdown from imperfect / envelope-shaped model output.
 func ParseDevSpecJSON(raw string, titleFallback string) (*model.DevSpec, string, error) {
-	raw = strings.TrimSpace(raw)
+	raw = unwrapJSONObject(raw)
 	if raw == "" {
 		return nil, "", fmt.Errorf("empty model response")
-	}
-	// Strip ```json fences if present.
-	if strings.HasPrefix(raw, "```") {
-		raw = strings.TrimPrefix(raw, "```json")
-		raw = strings.TrimPrefix(raw, "```JSON")
-		raw = strings.TrimPrefix(raw, "```")
-		if i := strings.LastIndex(raw, "```"); i >= 0 {
-			raw = raw[:i]
-		}
-		raw = strings.TrimSpace(raw)
-	}
-	// Try to find first { ... }
-	if !strings.HasPrefix(raw, "{") {
-		if i := strings.Index(raw, "{"); i >= 0 {
-			if j := strings.LastIndex(raw, "}"); j > i {
-				raw = raw[i : j+1]
-			}
-		}
 	}
 
 	var parsed struct {
@@ -369,17 +351,24 @@ func ParseDevSpecJSON(raw string, titleFallback string) (*model.DevSpec, string,
 		RawMarkdown         string                 `json:"rawMarkdown"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		// Fallback: treat whole response as markdown-only spec
-		return &model.DevSpec{
-			Title:               titleFallback,
-			Summary:             "Generated from unstructured model output",
-			ArchitectureDesign:  "",
-			FileChanges:         []model.SpecFileChange{},
-			ImplementationSteps: []string{},
-			TestCases:           []string{},
-			RawMarkdown:         raw,
-			UpdatedAt:           model.NowISO(),
-		}, "已根据讨论更新待开发文档。", nil
+		repaired := repairLooseJSON(raw)
+		if err2 := json.Unmarshal([]byte(repaired), &parsed); err2 != nil {
+			// Keep array fields if repaired JSON still parses partially via extract + rebuild.
+			var arraysOnly struct {
+				FileChanges         []model.SpecFileChange `json:"fileChanges"`
+				ImplementationSteps []string               `json:"implementationSteps"`
+				TestCases           []string               `json:"testCases"`
+			}
+			_ = json.Unmarshal([]byte(repaired), &arraysOnly)
+			parsed.FileChanges = arraysOnly.FileChanges
+			parsed.ImplementationSteps = arraysOnly.ImplementationSteps
+			parsed.TestCases = arraysOnly.TestCases
+			parsed.RawMarkdown, _ = extractJSONStringField(raw, "rawMarkdown")
+			parsed.ChatReply, _ = extractJSONStringField(raw, "chatReply")
+			parsed.Title, _ = extractJSONStringField(raw, "title")
+			parsed.Summary, _ = extractJSONStringField(raw, "summary")
+			parsed.ArchitectureDesign, _ = extractJSONStringField(raw, "architectureDesign")
+		}
 	}
 	if parsed.Title == "" {
 		parsed.Title = titleFallback
@@ -393,12 +382,12 @@ func ParseDevSpecJSON(raw string, titleFallback string) (*model.DevSpec, string,
 	if parsed.TestCases == nil {
 		parsed.TestCases = []string{}
 	}
-	md := strings.TrimSpace(parsed.RawMarkdown)
-	if md == "" {
+	md := CoerceReqMarkdown(strings.TrimSpace(parsed.RawMarkdown))
+	if md == "" || looksLikeReqDocJSONEnvelope(md) {
 		md = buildMarkdown(parsed.Title, parsed.Summary, parsed.ArchitectureDesign, parsed.FileChanges, parsed.ImplementationSteps, parsed.TestCases)
 	}
 	// Normalize: ensure document starts with a title heading when missing.
-	if parsed.Title != "" && !strings.HasPrefix(md, "#") {
+	if parsed.Title != "" && md != "" && !strings.HasPrefix(strings.TrimSpace(md), "#") {
 		md = "# " + parsed.Title + "\n\n" + md
 	}
 	chatReply := strings.TrimSpace(parsed.ChatReply)

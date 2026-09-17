@@ -144,9 +144,16 @@ func (s *Server) handleExportReqDoc(w http.ResponseWriter, r *http.Request) {
 	md := ""
 	title := issue.Title
 	if issue.ReqDoc != nil {
-		md = strings.TrimSpace(issue.ReqDoc.RawMarkdown)
+		md = llm.CoerceReqMarkdown(issue.ReqDoc.RawMarkdown)
 		if issue.ReqDoc.Title != "" {
 			title = issue.ReqDoc.Title
+		}
+		// Persist heal when stored body was the JSON envelope.
+		// Keep UpdatedAt unchanged so an existing acceptance stays valid.
+		if md != "" && md != strings.TrimSpace(issue.ReqDoc.RawMarkdown) {
+			issue.ReqDoc.RawMarkdown = md
+			issue.UpdatedAt = model.NowISO()
+			_ = s.Store.UpsertIssue(*issue)
 		}
 	}
 	if md == "" {

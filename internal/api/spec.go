@@ -342,18 +342,18 @@ func (s *Server) handleExportSpec(w http.ResponseWriter, r *http.Request) {
 		}
 		title = firstNonEmpty(sub.Title, title)
 		if sub.DevSpec != nil {
-			md = firstNonEmpty(sub.DevSpec.RawMarkdown, sub.DevSpec.Summary)
+			md = firstNonEmpty(llm.CoerceReqMarkdown(sub.DevSpec.RawMarkdown), sub.DevSpec.Summary)
 		}
 	} else if issue.HasSubRequirements() {
 		var b strings.Builder
 		if issue.DevSpec != nil && strings.TrimSpace(issue.DevSpec.RawMarkdown) != "" {
-			b.WriteString(strings.TrimSpace(issue.DevSpec.RawMarkdown))
+			b.WriteString(llm.CoerceReqMarkdown(issue.DevSpec.RawMarkdown))
 			b.WriteString("\n\n")
 		}
 		for _, sub := range issue.SubRequirements {
 			b.WriteString("\n---\n\n")
 			if sub.DevSpec != nil && strings.TrimSpace(sub.DevSpec.RawMarkdown) != "" {
-				b.WriteString(strings.TrimSpace(sub.DevSpec.RawMarkdown))
+				b.WriteString(llm.CoerceReqMarkdown(sub.DevSpec.RawMarkdown))
 			} else {
 				b.WriteString("# ")
 				b.WriteString(sub.Title)
@@ -367,11 +367,12 @@ func (s *Server) handleExportSpec(w http.ResponseWriter, r *http.Request) {
 			title = issue.DevSpec.Title
 		}
 	} else if issue.DevSpec != nil {
-		md = firstNonEmpty(issue.DevSpec.RawMarkdown, issue.DevSpec.Summary)
+		md = firstNonEmpty(llm.CoerceReqMarkdown(issue.DevSpec.RawMarkdown), issue.DevSpec.Summary)
 		if issue.DevSpec.Title != "" {
 			title = issue.DevSpec.Title
 		}
 	}
+	md = llm.CoerceReqMarkdown(md)
 	if strings.TrimSpace(md) == "" {
 		writeErr(w, 404, "no Dev Spec to export")
 		return

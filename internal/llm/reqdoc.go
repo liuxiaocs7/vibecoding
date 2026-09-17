@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ymhhh/vibecoding/internal/model"
@@ -14,6 +15,7 @@ func ParseReqDocJSON(raw string, titleFallback string) (*model.ReqDoc, string, e
 	if raw == "" {
 		return nil, "", fmt.Errorf("empty model response")
 	}
+
 	var parsed struct {
 		ChatReply   string `json:"chatReply"`
 		Title       string `json:"title"`
@@ -25,19 +27,26 @@ func ParseReqDocJSON(raw string, titleFallback string) (*model.ReqDoc, string, e
 		RawMarkdown string `json:"rawMarkdown"`
 	}
 	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
-		// Fallback: treat whole response as markdown requirement.
-		return &model.ReqDoc{
-			Title:       titleFallback,
-			RawMarkdown: strings.TrimSpace(raw),
-			UpdatedAt:   model.NowISO(),
-		}, "已根据讨论更新需求文档。", nil
+		// Models often emit almost-JSON (trailing commas, raw newlines in strings).
+		repaired := repairLooseJSON(raw)
+		if err2 := json.Unmarshal([]byte(repaired), &parsed); err2 != nil {
+			parsed.RawMarkdown, _ = extractJSONStringField(raw, "rawMarkdown")
+			parsed.ChatReply, _ = extractJSONStringField(raw, "chatReply")
+			parsed.Title, _ = extractJSONStringField(raw, "title")
+			parsed.Summary, _ = extractJSONStringField(raw, "summary")
+			parsed.Scope, _ = extractJSONStringField(raw, "scope")
+			parsed.NonGoals, _ = extractJSONStringField(raw, "nonGoals")
+			parsed.Acceptance, _ = extractJSONStringField(raw, "acceptance")
+			parsed.Constraints, _ = extractJSONStringField(raw, "constraints")
+		}
 	}
+
 	title := firstNonEmpty(parsed.Title, titleFallback)
-	md := strings.TrimSpace(parsed.RawMarkdown)
-	if md == "" {
+	md := CoerceReqMarkdown(strings.TrimSpace(parsed.RawMarkdown))
+	if md == "" || looksLikeReqDocJSONEnvelope(md) {
 		md = buildReqMarkdown(title, parsed.Summary, parsed.Scope, parsed.NonGoals, parsed.Acceptance, parsed.Constraints)
 	}
-	if title != "" && !strings.HasPrefix(md, "#") {
+	if title != "" && md != "" && !strings.HasPrefix(strings.TrimSpace(md), "#") {
 		md = "# " + title + "\n\n" + md
 	}
 	reply := strings.TrimSpace(parsed.ChatReply)
@@ -54,6 +63,157 @@ func ParseReqDocJSON(raw string, titleFallback string) (*model.ReqDoc, string, e
 		RawMarkdown: md,
 		UpdatedAt:   model.NowISO(),
 	}, reply, nil
+}
+
+// CoerceReqMarkdown recovers Markdown when a ReqDoc body accidentally stored the
+// model JSON envelope ({"chatReply":...,"rawMarkdown":...}).
+func CoerceReqMarkdown(md string) string {
+	md = strings.TrimSpace(md)
+	if md == "" {
+		return ""
+	}
+	if !looksLikeReqDocJSONEnvelope(md) {
+		return md
+	}
+	unwrapped := unwrapJSONObject(md)
+	var parsed struct {
+		RawMarkdown string `json:"rawMarkdown"`
+	}
+	if err := json.Unmarshal([]byte(unwrapped), &parsed); err == nil {
+		if out := strings.TrimSpace(parsed.RawMarkdown); out != "" && !looksLikeReqDocJSONEnvelope(out) {
+			return out
+		}
+	}
+	if repaired := repairLooseJSON(unwrapped); repaired != unwrapped {
+		if err := json.Unmarshal([]byte(repaired), &parsed); err == nil {
+			if out := strings.TrimSpace(parsed.RawMarkdown); out != "" && !looksLikeReqDocJSONEnvelope(out) {
+				return out
+			}
+		}
+	}
+	if out, ok := extractJSONStringField(unwrapped, "rawMarkdown"); ok {
+		out = strings.TrimSpace(out)
+		if out != "" && !looksLikeReqDocJSONEnvelope(out) {
+			return out
+		}
+	}
+	return md
+}
+
+func looksLikeReqDocJSONEnvelope(s string) bool {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "{") {
+		return false
+	}
+	return strings.Contains(t, `"rawMarkdown"`) || strings.Contains(t, `"chatReply"`)
+}
+
+// repairLooseJSON applies cheap fixes for common LLM JSON mistakes.
+func repairLooseJSON(raw string) string {
+	s := strings.TrimSpace(raw)
+	// Drop trailing commas before } or ]
+	var b strings.Builder
+	b.Grow(len(s))
+	inString := false
+	escape := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inString {
+			b.WriteByte(c)
+			if escape {
+				escape = false
+				continue
+			}
+			if c == '\\' {
+				escape = true
+				continue
+			}
+			if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			b.WriteByte(c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(s) && (s[j] == ' ' || s[j] == '\n' || s[j] == '\r' || s[j] == '\t') {
+				j++
+			}
+			if j < len(s) && (s[j] == '}' || s[j] == ']') {
+				continue // skip trailing comma
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
+}
+
+// extractJSONStringField pulls a string field from imperfect JSON by scanning
+// for "key": "value", allowing raw newlines inside the value.
+func extractJSONStringField(raw, key string) (string, bool) {
+	needle := `"` + key + `"`
+	idx := strings.Index(raw, needle)
+	if idx < 0 {
+		return "", false
+	}
+	i := idx + len(needle)
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\n' || raw[i] == '\r' || raw[i] == '\t') {
+		i++
+	}
+	if i >= len(raw) || raw[i] != ':' {
+		return "", false
+	}
+	i++
+	for i < len(raw) && (raw[i] == ' ' || raw[i] == '\n' || raw[i] == '\r' || raw[i] == '\t') {
+		i++
+	}
+	if i >= len(raw) || raw[i] != '"' {
+		return "", false
+	}
+	i++ // opening quote
+	var out strings.Builder
+	for i < len(raw) {
+		c := raw[i]
+		if c == '\\' && i+1 < len(raw) {
+			n := raw[i+1]
+			switch n {
+			case 'n':
+				out.WriteByte('\n')
+			case 'r':
+				out.WriteByte('\r')
+			case 't':
+				out.WriteByte('\t')
+			case '"', '\\', '/':
+				out.WriteByte(n)
+			case 'u':
+				// Keep \uXXXX as-is if short; best-effort decode 4 hex digits.
+				if i+5 < len(raw) {
+					hex := raw[i+2 : i+6]
+					if r, err := strconv.ParseInt(hex, 16, 32); err == nil {
+						out.WriteRune(rune(r))
+						i += 6
+						continue
+					}
+				}
+				out.WriteByte('\\')
+				out.WriteByte(n)
+			default:
+				out.WriteByte(n)
+			}
+			i += 2
+			continue
+		}
+		if c == '"' {
+			return out.String(), true
+		}
+		out.WriteByte(c)
+		i++
+	}
+	return "", false
 }
 
 func buildReqMarkdown(title, summary, scope, nonGoals, acceptance, constraints string) string {
