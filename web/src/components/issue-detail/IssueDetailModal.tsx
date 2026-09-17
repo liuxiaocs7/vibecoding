@@ -529,6 +529,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           selectedScope={selectedScope}
           associatedRepos={associatedRepos}
           lang={lang}
+          isSending={isSending}
           setActiveTab={setActiveTab}
           handleSendMessage={handleSendMessage}
           onUpdateIssue={onUpdateIssue}

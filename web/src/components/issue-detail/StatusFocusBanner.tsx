@@ -21,6 +21,7 @@ import {
   ShieldCheck,
   CheckCircle2,
   Layers,
+  Loader2,
 } from 'lucide-react';
 import { api } from '../../lib/api';
 
@@ -30,6 +31,7 @@ interface StatusFocusBannerProps {
   selectedScope: string;
   associatedRepos: { id: string }[];
   lang: Language;
+  isSending?: boolean;
   setActiveTab: (tab: 'chat' | 'spec' | 'console' | 'review') => void;
   handleSendMessage: (
     customPrompt?: string,
@@ -47,6 +49,7 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
   selectedScope,
   associatedRepos,
   lang,
+  isSending,
   setActiveTab,
   handleSendMessage,
   onUpdateIssue,
@@ -58,6 +61,40 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
   const reqOk = requirementAccepted(issue) || legacySpecOnly(issue);
   const canDesign = reqOk && associatedRepos.length > 0;
   const targetingSub = splitIssue && selectedScope !== 'all';
+
+  const startDesignFromSource = () => {
+    if (isSending) return;
+    if (!canDesign) {
+      window.alert(
+        !reqOk
+          ? lang === 'zh'
+            ? '请先确认需求文档，再生成开发设计。'
+            : 'Accept the requirement document before generating design.'
+          : lang === 'zh'
+            ? '请先关联至少一个代码仓库。'
+            : 'Associate at least one repository first.'
+      );
+      return;
+    }
+    if (splitIssue && !targetingSub) {
+      window.alert(
+        lang === 'zh'
+          ? '请先选择一个子需求再生成开发设计'
+          : 'Pick a sub-requirement before generating design'
+      );
+      return;
+    }
+    setActiveTab('chat');
+    void handleSendMessage(
+      lang === 'zh'
+        ? '请基于关联仓库源码摘要，撰写完整开发设计（架构、改动文件、实施步骤与测试用例）。'
+        : 'Write a complete Dev Spec from local source excerpts (architecture, file changes, steps, tests).',
+      {
+        forceSpecSync: true,
+        scope: targetingSub ? selectedScope : undefined,
+      }
+    );
+  };
 
   const moveToBacklog = async () => {
     if (!specReadyForDev(issue)) {
@@ -154,36 +191,22 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
             )}
             {canDesign && (
               <button
-                onClick={() => {
-                  if (splitIssue && !targetingSub) {
-                    window.alert(
-                      lang === 'zh'
-                        ? '请先选择一个子需求再生成开发设计'
-                        : 'Pick a sub-requirement before generating design'
-                    );
-                    return;
-                  }
-                  const warn =
-                    lang === 'zh'
-                      ? '将读取关联仓库源码摘要并发送给外部模型，是否继续？'
-                      : 'This will read associated repo excerpts and send them to the external model. Continue?';
-                  if (!window.confirm(warn)) return;
-                  setActiveTab('chat');
-                  handleSendMessage(
-                    lang === 'zh'
-                      ? '请基于关联仓库源码摘要，撰写完整开发设计（架构、改动文件、实施步骤与测试用例）。'
-                      : 'Write a complete Dev Spec from local source excerpts (architecture, file changes, steps, tests).',
-                    {
-                      forceSpecSync: true,
-                      scope: targetingSub ? selectedScope : undefined,
-                    }
-                  );
-                }}
-                className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-900 dark:text-amber-200 font-semibold text-[11px] flex items-center gap-1 transition-all"
-                title={t.extractSpecHint}
+                type="button"
+                onClick={startDesignFromSource}
+                disabled={!!isSending}
+                className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-900 dark:text-amber-200 font-semibold text-[11px] flex items-center gap-1 transition-all disabled:opacity-50"
+                title={t.extractSpecHint || t.sourceScanNotice}
               >
-                <FileText className="w-3 h-3 text-amber-500" />
-                {t.extractSpecBtn}
+                {isSending ? (
+                  <Loader2 className="w-3 h-3 text-amber-500 animate-spin" />
+                ) : (
+                  <FileText className="w-3 h-3 text-amber-500" />
+                )}
+                {isSending
+                  ? lang === 'zh'
+                    ? '正在生成设计…'
+                    : 'Generating…'
+                  : t.extractSpecBtn}
               </button>
             )}
             {(specReadyForDev(issue) || (hasReqDoc(issue) && !!issue.devSpec?.rawMarkdown)) &&

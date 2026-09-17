@@ -331,7 +331,10 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
             </button>
           ) : (
             <button
+              type="button"
+              disabled={!!isSending}
               onClick={() => {
+                if (isSending) return;
                 if (!requirementAccepted(issue) && !legacySpecOnly(issue)) {
                   window.alert(
                     lang === 'zh'
@@ -340,8 +343,16 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                   );
                   return;
                 }
+                if (splitIssue && selectedScope === 'all') {
+                  window.alert(
+                    lang === 'zh'
+                      ? '请先选择一个子需求再生成开发设计'
+                      : 'Pick a sub-requirement before generating design'
+                  );
+                  return;
+                }
                 setActiveTab('chat');
-                handleSendMessage(
+                void handleSendMessage(
                   lang === 'zh'
                     ? '请基于关联仓库源码摘要，撰写完整开发设计。'
                     : 'Write a complete Dev Spec from local source excerpts.',
@@ -351,10 +362,14 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                   }
                 );
               }}
-              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all"
+              className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold text-xs rounded-xl shadow-lg flex items-center gap-2 mx-auto transition-all disabled:opacity-50"
             >
-              <Sparkles className="w-4 h-4" />
-              {t.extractSpecBtn}
+              {isSending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+              {isSending
+                ? lang === 'zh'
+                  ? '正在生成设计…'
+                  : 'Generating…'
+                : t.extractSpecBtn}
             </button>
           )}
         </div>
