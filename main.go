@@ -32,7 +32,14 @@ func main() {
 		os.Exit(1)
 	}
 
-	boot, err := appbootstrap.New(cfg, nil)
+	assets, err := fs.Sub(embeddedFrontend, "web/dist")
+	if err != nil {
+		os.Stderr.WriteString("embed frontend: " + err.Error() + "\n")
+		os.Exit(1)
+	}
+
+	// Pass embedded SPA so desktop also serves http://127.0.0.1:8090 for browsers.
+	boot, err := appbootstrap.New(cfg, assets)
 	if err != nil {
 		os.Stderr.WriteString(err.Error() + "\n")
 		os.Exit(1)
@@ -40,16 +47,10 @@ func main() {
 	// Closed from App.shutdown so Wails can tear down cleanly.
 	app := NewApp(cfg, boot)
 
-	assets, err := fs.Sub(embeddedFrontend, "web/dist")
-	if err != nil {
-		_ = boot.Close()
-		os.Stderr.WriteString("embed frontend: " + err.Error() + "\n")
-		os.Exit(1)
-	}
-
 	apiHandler := boot.Handler()
 	logger.L().WithFields(logger.Fields{
 		"data_dir":  cfg.DataDir,
+		"addr":      cfg.Addr,
 		"log_level": cfg.LogLevel,
 		"log_fmt":   cfg.LogFormat,
 	}).Info("vibecoding desktop starting")

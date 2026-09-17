@@ -10,7 +10,7 @@
 
 | 模式 | 构建命令 | 得到什么 | 适用场景 |
 |------|----------|----------|----------|
-| **桌面版 Desktop** | `make build` | 原生窗口（Wails + 系统 WebView），无需系统浏览器 | macOS / Windows / Linux 上的日常本地图形界面 |
+| **桌面版 Desktop** | `make build` | 原生窗口（Wails + 系统 WebView），同时监听 `http://127.0.0.1:8090` 供浏览器打开 | macOS / Windows / Linux 上的日常本地图形界面 |
 | **服务版 Server** | `make build-server` | 仅 HTTP 进程（默认 `http://127.0.0.1:8090`），可选 `--open` 打开系统浏览器 | 无界面 / Docker / CI，或只需要 HTTP API 的调用方（例如未来的 OpenAPI 客户端） |
 
 两种模式默认都把数据写入 `~/.vibecoding/`（SQLite + 配置）。
@@ -71,7 +71,7 @@ Linux 运行时依赖（终端用户，非 `-dev`）：
 ```bash
 make doctor          # 一次性：校验 Wails / WebView 工具链
 make build           # 构建前端 + 桌面二进制 → ./vibecoding
-./vibecoding         # 打开原生窗口
+./vibecoding         # 打开原生窗口，同时监听 http://127.0.0.1:8090（可用浏览器打开）
 # 或：make run
 ```
 
@@ -104,17 +104,17 @@ make build-server    # 构建前端 + 服务二进制 → ./vibecoding
 curl -s http://127.0.0.1:8090/api/health
 ```
 
-### 命令行参数（主要用于服务版；桌面版也接受 data-dir / 日志相关）
+### 命令行参数（桌面版与服务版均适用；桌面版会额外打开原生窗口）
 
 | 参数 | 默认值 | 适用模式 | 说明 |
 |------|--------|----------|------|
-| `--addr` | `127.0.0.1:8090` | **服务版** | HTTP 监听地址 |
+| `--addr` | `127.0.0.1:8090` | 两者 | HTTP 监听地址（桌面版同时提供浏览器入口） |
 | `--data-dir` | `~/.vibecoding` | 两者 | SQLite / 配置目录 |
 | `--open` | `false` | **服务版** | 启动后打开系统浏览器访问 `--addr` |
 | `--log-level` | `info` | 两者 | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | 两者 | `text` / `json` |
 | `--log-output` | `stdout` | 两者 | `stdout` / `stderr` / `discard` / 文件路径 |
-| `--token` |（空） | **服务版** | 非 loopback 绑定必填；也可用环境变量 `VIBECODING_TOKEN` |
+| `--token` |（空） | 两者 | 非 loopback 绑定必填；也可用环境变量 `VIBECODING_TOKEN` |
 
 日志使用 [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-common/tree/main/logger)。
 

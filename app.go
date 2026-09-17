@@ -5,6 +5,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,15 +15,17 @@ import (
 	"time"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/ymhhh/go-common/logger"
 	"github.com/ymhhh/vibecoding/internal/appbootstrap"
 	"github.com/ymhhh/vibecoding/internal/config"
 )
 
 // App is the Wails-bound application (lifecycle only; API stays on HTTP).
 type App struct {
-	ctx  context.Context
-	boot *appbootstrap.App
-	cfg  *config.Config
+	ctx        context.Context
+	boot       *appbootstrap.App
+	cfg        *config.Config
+	httpServer *http.Server
 }
 
 func NewApp(cfg *config.Config, boot *appbootstrap.App) *App {
@@ -30,12 +34,48 @@ func NewApp(cfg *config.Config, boot *appbootstrap.App) *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	a.startLocalHTTP()
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if a.httpServer != nil {
+		shCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = a.httpServer.Shutdown(shCtx)
+	}
 	if a.boot != nil {
 		_ = a.boot.Close()
 	}
+}
+
+// startLocalHTTP serves the same API + SPA on cfg.Addr so a system browser can
+// open the board while the desktop window is running.
+func (a *App) startLocalHTTP() {
+	if a == nil || a.cfg == nil || a.boot == nil {
+		return
+	}
+	addr := strings.TrimSpace(a.cfg.Addr)
+	if addr == "" {
+		return
+	}
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           a.boot.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	a.httpServer = srv
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		logger.L().WithError(err).WithField("addr", addr).Warn("browser HTTP listen skipped (desktop window still works)")
+		a.httpServer = nil
+		return
+	}
+	logger.L().WithField("addr", addr).Info("also listening for browser")
+	go func() {
+		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
+			logger.L().WithError(err).Warn("browser HTTP server stopped")
+		}
+	}()
 }
 
 func sanitizeExportFilename(name string) string {

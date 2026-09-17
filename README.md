@@ -10,7 +10,7 @@ There are **two separate binaries / build targets**. They share the same data di
 
 | Mode | Command to build | What you get | Use when |
 |------|------------------|--------------|----------|
-| **Desktop** | `make build` | Native window (Wails + OS WebView). No system browser needed. | Everyday local GUI on macOS / Windows / Linux |
+| **Desktop** | `make build` | Native window (Wails + OS WebView), and also listens on `http://127.0.0.1:8090` for the system browser | Everyday local GUI on macOS / Windows / Linux |
 | **Server** | `make build-server` | HTTP process only (default `http://127.0.0.1:8090`). Optional `--open` opens the system browser. | Headless / Docker / CI, or callers that only need the HTTP API (e.g. future OpenAPI clients) |
 
 Both modes write to `~/.vibecoding/` by default (SQLite + settings).  
@@ -71,7 +71,7 @@ No WebView / CGO. A browser is optional — only if you pass `--open` or open th
 ```bash
 make doctor          # once: verify Wails / WebView toolchain
 make build           # frontend + desktop binary → ./vibecoding
-./vibecoding         # opens a native window
+./vibecoding         # native window + http://127.0.0.1:8090 for the system browser
 # or: make run
 ```
 
@@ -104,17 +104,17 @@ Health check:
 curl -s http://127.0.0.1:8090/api/health
 ```
 
-### Flags (mostly Server; Desktop also accepts data-dir / logging)
+### Flags (desktop and server; desktop also opens a native window)
 
 | Flag | Default | Applies to | Description |
 |------|---------|------------|-------------|
-| `--addr` | `127.0.0.1:8090` | **Server** | HTTP listen address |
+| `--addr` | `127.0.0.1:8090` | Both | HTTP listen address (desktop also exposes this for browsers) |
 | `--data-dir` | `~/.vibecoding` | Both | SQLite / config directory |
 | `--open` | `false` | **Server** | After start, open the system browser to `--addr` |
 | `--log-level` | `info` | Both | `debug` / `info` / `warn` / `error` |
 | `--log-format` | `text` | Both | `text` / `json` |
 | `--log-output` | `stdout` | Both | `stdout` / `stderr` / `discard` / path to file |
-| `--token` | (empty) | **Server** | Required when `--addr` is not loopback; also via `VIBECODING_TOKEN` |
+| `--token` | (empty) | Both | Required when `--addr` is not loopback; also via `VIBECODING_TOKEN` |
 
 Logging uses [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-common/tree/main/logger).
 
