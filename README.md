@@ -6,6 +6,16 @@ Local-first AI Auto-Dev board: manage projects and issues on a Kanban, generate 
 
 Default data directory: `~/.vibecoding/` (SQLite + settings + worktrees).
 
+## Screenshots
+
+Sample project **演示商城** with one issue in each Kanban stage (requirements → backlog → in progress → review → completed):
+
+![Kanban with all stages](./docs/images/kanban-stages.png)
+
+Opening a requirements-stage issue to chat and extract Specs:
+
+![Requirements-stage issue](./docs/images/issue-requirements-stage.png)
+
 ---
 
 ## Which mode?
@@ -147,7 +157,7 @@ There is **no in-app setting**. Put a file at the **root of each associated git 
 | `CLAUDE.md` | Used only if `AGENTS.md` is missing |
 | `README.md` | A short excerpt is also included when present |
 
-On Auto-Dev, Vibecoding reads these from the local repo path and injects them into the coding prompt. Edit and commit in the repo; the next run picks up the change.
+On Auto-Dev, Vibecoding reads these from the local repo path and injects them into the coding prompt. Edit and commit in the repo; the next run picks up the change. See a sample at [`docs/demo-repo/AGENTS.md`](./docs/demo-repo/AGENTS.md).
 
 ### Coding executors (optional)
 

@@ -6,6 +6,16 @@
 
 默认数据目录：`~/.vibecoding/`（SQLite、配置、worktree）。
 
+## 界面预览
+
+示例项目「演示商城」：看板上五个阶段各有一条需求（需求分析 → 待办 → 开发中 → 评审中 → 已完成）。
+
+![看板五阶段示例](./docs/images/kanban-stages.png)
+
+打开「需求分析」中的需求，可对话并提炼需求文档 / 开发设计：
+
+![需求分析阶段示例](./docs/images/issue-requirements-stage.png)
+
 ---
 
 ## 用哪种模式？
@@ -147,7 +157,7 @@ curl -s http://127.0.0.1:8090/api/health
 | `CLAUDE.md` | 没有 `AGENTS.md` 时才用 |
 | `README.md` | 有的话会额外带一段摘要 |
 
-Auto-Dev 启动时从本地仓库路径读入并注入编码 prompt。在仓库里改好、提交，下次跑就会生效。
+Auto-Dev 启动时从本地仓库路径读入并注入编码 prompt。在仓库里改好、提交，下次跑就会生效。仓库根目录示例见 [`docs/demo-repo/AGENTS.md`](./docs/demo-repo/AGENTS.md)。
 
 ### 编码执行器（可选）
 
