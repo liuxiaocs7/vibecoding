@@ -24,6 +24,7 @@ import {
   AlertCircle,
   X,
   Maximize2,
+  Trash2,
 } from 'lucide-react';
 import { isDesktopApp, toggleDesktopMaximize } from './lib/desktop';
 
@@ -60,6 +61,7 @@ export default function App() {
   const [isCreateIssueModalOpen, setIsCreateIssueModalOpen] = useState(false);
   const [isGlobalSettingsOpen, setIsGlobalSettingsOpen] = useState(false);
   const [startPick, setStartPick] = useState<{ issueId: string; subRequirementId?: string } | null>(null);
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null);
 
   const autoDevJobs = useRef<Map<string, string>>(new Map()); // issueId -> jobId
   const unsubscribers = useRef<Map<string, () => void>>(new Map());
@@ -223,6 +225,7 @@ export default function App() {
   const handleDeleteProject = async (projectId: string) => {
     try {
       await api.deleteProject(projectId);
+      setDeletingProjectId(null);
       setProjects((prev) => {
         const next = prev.filter((p) => p.id !== projectId);
         if (activeProjectId === projectId) {
@@ -568,10 +571,14 @@ export default function App() {
                 )}
                 {projects.map((proj) => {
                   const isActive = proj.id === activeProject?.id;
+                  const confirmingDelete = deletingProjectId === proj.id;
                   return (
                     <div
                       key={proj.id}
-                      onClick={() => setActiveProjectId(proj.id)}
+                      onClick={() => {
+                        setDeletingProjectId(null);
+                        setActiveProjectId(proj.id);
+                      }}
                       className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between gap-1 group ${
                         isActive ? themeConfig.sidebarItemActive : themeConfig.sidebarItemHover
                       }`}
@@ -581,22 +588,67 @@ export default function App() {
                         <span className="text-xs font-medium truncate">{proj.name}</span>
                       </div>
                       <div className="flex items-center gap-0.5 shrink-0">
-                        <span className={`text-[10px] font-mono ${themeConfig.textMuted}`}>{proj.gitRepos.length}</span>
-                        <button
-                          type="button"
-                          title={t.projectSettings}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setActiveProjectId(proj.id);
-                            setEditingProject(proj);
-                            setIsProjectModalOpen(true);
-                          }}
-                          className={`p-1 rounded-lg transition-opacity ${
-                            isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
-                          } ${themeConfig.textMuted} hover:text-indigo-500 hover:bg-black/5 dark:hover:bg-white/10`}
-                        >
-                          <Settings className="w-3.5 h-3.5" />
-                        </button>
+                        {!confirmingDelete && (
+                          <span className={`text-[10px] font-mono ${themeConfig.textMuted}`}>{proj.gitRepos.length}</span>
+                        )}
+                        {!confirmingDelete && (
+                          <button
+                            type="button"
+                            title={t.projectSettings}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDeletingProjectId(null);
+                              setActiveProjectId(proj.id);
+                              setEditingProject(proj);
+                              setIsProjectModalOpen(true);
+                            }}
+                            className={`p-1 rounded-lg transition-opacity ${
+                              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+                            } ${themeConfig.textMuted} hover:text-indigo-500 hover:bg-black/5 dark:hover:bg-white/10`}
+                          >
+                            <Settings className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        {confirmingDelete ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeletingProjectId(null);
+                              }}
+                              className={`px-2 py-0.5 rounded-lg text-[10px] font-semibold ${themeConfig.textSecondary} hover:bg-black/5 dark:hover:bg-white/10`}
+                            >
+                              {t.cancel}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleDeleteProject(proj.id);
+                              }}
+                              className="px-2 py-0.5 rounded-lg text-[10px] font-bold text-white bg-rose-500 hover:bg-rose-600"
+                              title={t.confirmDeleteProject.replace('{name}', proj.name)}
+                            >
+                              {t.confirm}
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            type="button"
+                            title={t.deleteProject}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setDeletingProjectId(proj.id);
+                            }}
+                            className={`p-1 rounded-lg transition-opacity ${
+                              isActive ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
+                            } text-rose-400/80 hover:text-rose-500 hover:bg-rose-500/10`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   );
@@ -618,14 +670,6 @@ export default function App() {
                 </div>
                 <ChevronRight className={`w-3.5 h-3.5 ${themeConfig.textMuted}`} />
               </button>
-              {activeProject && (
-                <button
-                  onClick={() => handleDeleteProject(activeProject.id)}
-                  className={`w-full p-3 rounded-xl transition-colors flex items-center text-xs text-rose-400 border border-transparent ${themeConfig.sidebarItemHover}`}
-                >
-                  {t.deleteCurrentProject}
-                </button>
-              )}
             </div>
           </nav>
         </div>
