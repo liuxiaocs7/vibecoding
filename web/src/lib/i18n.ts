@@ -58,6 +58,12 @@ export const TRANSLATIONS = {
     startAutoDev: 'Start Auto-Dev',
     startAutoDevPickTitle: 'Choose executor for this run',
     startAutoDevPickHint: 'Defaults to the global setting. Unavailable CLIs cannot be selected.',
+    agentsMdBannerTitle: 'Repo guide: AGENTS.md',
+    agentsMdBannerBody:
+      'No setting in this app. Put AGENTS.md at the root of each linked git repo (test/lint commands, naming rules, folders not to touch). If missing, CLAUDE.md is used; README.md is also sampled. Auto-Dev injects it into the coding prompt automatically.',
+    agentsMdStartHint:
+      'Tip: put AGENTS.md at each linked repo root so Auto-Dev follows your conventions. Not configured in this UI.',
+    agentsMdIssueHint: 'Conventions: add AGENTS.md at each linked repo root (auto-read on Auto-Dev).',
     reviewPR: 'Review PR Code',
     viewSpecDiff: 'View Spec & Diff',
     approvedMerged: 'Approved & Merged',
@@ -361,6 +367,12 @@ export const TRANSLATIONS = {
     startAutoDev: '启动自治开发',
     startAutoDevPickTitle: '选择本次执行器',
     startAutoDevPickHint: '默认使用全局设置。未安装的 CLI 不可选。',
+    agentsMdBannerTitle: '仓库约定：AGENTS.md',
+    agentsMdBannerBody:
+      '应用内没有这项配置。请在每个关联 git 仓库的根目录放置 AGENTS.md（测试/ lint 怎么跑、命名规则、别动哪些目录等）。没有则读 CLAUDE.md，有 README.md 也会带一段摘要。启动 Auto-Dev 时会自动注入编码 prompt。',
+    agentsMdStartHint:
+      '提示：在各关联仓库根目录放 AGENTS.md，Auto-Dev 会按你的约定写代码。此处无法配置。',
+    agentsMdIssueHint: '约定：在各关联仓库根目录添加 AGENTS.md（启动 Auto-Dev 时自动读取）。',
     reviewPR: '评审 PR 代码',
     viewSpecDiff: '查看 Spec & Diff',
     approvedMerged: '代码评审通过 & 已合并',

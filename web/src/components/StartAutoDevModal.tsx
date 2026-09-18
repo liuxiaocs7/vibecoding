@@ -100,6 +100,15 @@ export const StartAutoDevModal: React.FC<StartAutoDevModalProps> = ({
         </div>
         <div className="p-4 space-y-3 text-sm">
           <p className={`text-xs ${themeConfig.textMuted}`}>{t.startAutoDevPickHint}</p>
+          <div
+            className={`rounded-xl border px-3 py-2 text-[11px] leading-relaxed ${
+              themeConfig.isLight
+                ? 'bg-amber-50 border-amber-200/80 text-amber-950'
+                : 'bg-amber-500/10 border-amber-500/30 text-amber-100'
+            }`}
+          >
+            {t.agentsMdStartHint}
+          </div>
           {loading ? (
             <div className="flex items-center gap-2 text-xs text-slate-500">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Issue, GitRepo } from '../../types';
-import { Language, ThemeStyle } from '../../lib/i18n';
+import { Language, ThemeStyle, getTranslation } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { GitBranch, Pencil } from 'lucide-react';
 
@@ -28,6 +28,7 @@ export const AssociatedReposBar: React.FC<AssociatedReposBarProps> = ({
   themeStyle,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
+  const t = getTranslation(lang);
 
   return (
     <div className={`px-5 py-2.5 border-b ${themeConfig.subtleBorder} ${themeConfig.modalHeaderBg}`}>
@@ -80,6 +81,7 @@ export const AssociatedReposBar: React.FC<AssociatedReposBarProps> = ({
                 : 'No repos linked'}
             </p>
           )}
+          <p className={`mt-1.5 text-[10px] leading-snug ${themeConfig.textMuted}`}>{t.agentsMdIssueHint}</p>
         </div>
         {canEditRepos && (
           <button

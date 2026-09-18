@@ -21,6 +21,7 @@ import {
   Loader2,
   AlertCircle,
   Sliders,
+  BookOpen,
 } from 'lucide-react';
 
 interface ProjectModalProps {
@@ -326,6 +327,26 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
 
           {activeTab === 'repos' && (
             <div className="space-y-4">
+              <div
+                className={`rounded-xl border px-3.5 py-3 flex gap-2.5 ${
+                  isLight
+                    ? 'bg-amber-50 border-amber-200/80 text-amber-950'
+                    : 'bg-amber-500/10 border-amber-500/30 text-amber-100'
+                }`}
+              >
+                <BookOpen className="w-4 h-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-300" />
+                <div className="min-w-0 space-y-1">
+                  <div className="text-xs font-semibold">{t.agentsMdBannerTitle}</div>
+                  <p className="text-[11px] leading-relaxed opacity-90">{t.agentsMdBannerBody}</p>
+                  <p className={`text-[10px] font-mono ${isLight ? 'text-amber-800/80' : 'text-amber-200/80'}`}>
+                    {'<repo>/AGENTS.md'}
+                    <span className="mx-1.5 opacity-50">→</span>
+                    {'CLAUDE.md'}
+                    <span className="mx-1.5 opacity-50">+</span>
+                    {'README.md'}
+                  </p>
+                </div>
+              </div>
               <div className={`flex items-center justify-between pb-2 border-b ${themeConfig.subtleBorder}`}>
                 <div>
                   <h3 className={`text-xs font-semibold ${themeConfig.textPrimary}`}>关联的本地 Git 代码工程列表</h3>

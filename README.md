@@ -2,79 +2,75 @@
 
 **English** | [简体中文](./README.zh-CN.md)
 
-Local-first AI Auto-Dev board: manage projects and issues on a Kanban, generate Dev Specs with an LLM, then let VibeBot create a git branch, patch code, run tests, and commit for review.
+Local-first AI Auto-Dev board: manage projects and issues on a Kanban, generate Specs with an LLM, then let Auto-Dev create a branch, patch code, run tests, and commit for review.
 
-## Which mode should I use?
+Default data directory: `~/.vibecoding/` (SQLite + settings + worktrees).
 
-There are **two separate binaries / build targets**. They share the same data directory and `/api` backend, but start differently:
+---
 
-| Mode | Command to build | What you get | Use when |
-|------|------------------|--------------|----------|
-| **Server (browser)** | `make build-server` → `./vibecoding-server` | HTTP only on `http://127.0.0.1:8090` — **no desktop window**. Prefer `make serve`. | Daily use in the system browser, Docker, CI, API-only |
-| **Desktop** | `make build` → `./vibecoding` | Native window (Wails + OS WebView); also listens on `:8090` | Prefer a native app window |
+## Which mode?
 
-Both modes write to `~/.vibecoding/` by default (SQLite + settings).  
-Desktop and server binaries have **different names**, so building one does not overwrite the other.
+There are two binaries. Same data and same `/api`, different entry:
+
+| Mode | Build / run | Binary | What you get |
+|------|-------------|--------|--------------|
+| **Browser (recommended day-to-day)** | `make serve` | `./vibecoding-server` | HTTP on `http://127.0.0.1:8090`, **no** desktop window |
+| **Desktop** | `make run` | `./vibecoding` | Native window (Wails). Also listens on `:8090` so a browser can open the same UI |
+
+Names differ on purpose — building one does not overwrite the other.
+
+Use **Server** for Docker / CI / “just open the browser”. Use **Desktop** if you want a native app window.
 
 ---
 
 ## Requirements
 
-### Always needed
+### Always
 
-- Go 1.21+ (macOS 15+ needs **Go 1.23.3+**; this repo uses Go 1.25.x)
-- Node.js 15+ (18+ recommended) to build the web UI
+- Go 1.21+ (macOS 15+ needs **Go 1.23.3+**; this repo targets Go 1.25.x)
+- Node.js 18+ to build the web UI
 - `git` on PATH
-- An OpenAI-compatible API key (configured in the app, or via env such as `GEMINI_API_KEY` where supported)
+- An OpenAI-compatible API key (configured in the app)
 
-### Extra for Desktop only
+### Desktop only
 
-Install the Wails CLI once, then check the machine:
+Install Wails once, then check the machine:
 
 ```bash
 go install github.com/wailsapp/wails/v2/cmd/wails@latest
-# ensure $(go env GOPATH)/bin is on your PATH
-make doctor   # same as: wails doctor
+# ensure $(go env GOPATH)/bin is on PATH
+make doctor
 ```
 
-| OS | Develop | Run |
-|----|---------|-----|
-| **macOS** | Xcode Command Line Tools (`xcode-select --install`) | Built-in **WKWebView** |
-| **Windows** 10/11 | Go + Node; WebView2 (see `wails doctor`) | [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (usually already installed) |
-| **Linux** | `gcc` + GTK3 + WebKit2GTK **dev** packages (`wails doctor` prints the exact apt/dnf/pacman lines) | GTK3 + WebKit2GTK **runtime** (examples below) |
+| OS | Need |
+|----|------|
+| **macOS** | Xcode Command Line Tools (`xcode-select --install`); built-in WKWebView |
+| **Windows** 10/11 | [WebView2 Runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (usually already installed) |
+| **Linux** | GTK3 + WebKit2GTK. `make doctor` prints the exact apt/dnf/pacman lines |
 
-Supported: Windows 10/11 AMD64/ARM64; macOS 10.15+ AMD64 (dev) / 11.0+ ARM64; Linux AMD64/ARM64.
+Linux runtime examples (end users, not `-dev`):
 
-Linux runtime packages (end users — not `-dev`):
+- Debian 12 / Ubuntu 22.04+: `apt install libgtk-3-0 libwebkit2gtk-4.1-0`
+- Older Debian/Ubuntu 4.0: `apt install libgtk-3-0 libwebkit2gtk-4.0-37` — or prefer Server mode / build with `-tags webkit2_40`
 
-| Distro | Install |
-|--------|---------|
-| Debian 12 / Ubuntu 22.04+ | `apt install libgtk-3-0 libwebkit2gtk-4.1-0` |
-| Debian 11 / Ubuntu 20.04 | `apt install libgtk-3-0 libwebkit2gtk-4.0-37` |
-| Fedora 40+ | `dnf install gtk3 webkit2gtk4.1` |
-| Arch / Manjaro | `pacman -S gtk3 webkit2gtk-4.1` |
+Desktop Linux defaults to WebKit2GTK **4.1**. See [Wails Linux distro support](https://wails.io/docs/guides/linux-distro-support/).
 
-Desktop Linux builds default to WebKit2GTK ABI **4.1** (`webkit2_41`). On older ABI 4.0 distros, prefer **Server** mode, or build desktop with `-tags webkit2_40`. See [Wails Linux distro support](https://wails.io/docs/guides/linux-distro-support/).
+### Server only
 
-Optional: [UPX](https://upx.github.io/), [NSIS](https://wails.io/docs/guides/windows-installer/) (Windows installer).
-
-### Extra for Server only
-
-No WebView / CGO. A browser is optional — only if you pass `--open` or open the URL yourself. API-only use needs no browser.
+No WebView / CGO. A browser is optional (`--open`, or open the URL yourself).
 
 ---
 
 ## Quick start
 
-### 1) Server only (browser — no desktop app)
+### Browser (no desktop app)
 
 ```bash
-make serve           # build HTTP binary → ./vibecoding-server, listen on :8090, open browser
-# or without auto-open:
-make serve-bg        # then open http://127.0.0.1:8090 yourself
+make serve           # build + listen on :8090 + open browser
+make serve-bg        # same, but do not open browser — visit http://127.0.0.1:8090
 ```
 
-Full rebuild of frontend + server:
+Full frontend + server rebuild:
 
 ```bash
 make build-server
@@ -92,98 +88,103 @@ CGO_ENABLED=0 go build -tags server -o vibecoding-server ./cmd/vibecoding
 ./vibecoding-server --open
 ```
 
-### 2) Desktop (native window)
+### Desktop
 
 ```bash
-make doctor          # once: verify Wails / WebView toolchain
-make build           # frontend + desktop binary → ./vibecoding
-./vibecoding         # native window + http://127.0.0.1:8090 for the system browser
+make doctor   # once
+make build    # → ./vibecoding
+./vibecoding  # native window + http://127.0.0.1:8090
 # or: make run
 ```
 
-Equivalent without Make:
+Without Make (macOS also needs `CGO_LDFLAGS="-framework UniformTypeIdentifiers"`):
 
 ```bash
 cd web && npm install && npm run build && cd ..
-# macOS also needs: export CGO_LDFLAGS="-framework UniformTypeIdentifiers"
 CGO_ENABLED=1 go build -tags "desktop,production" -o vibecoding .
 ./vibecoding
 ```
 
-Health check (either mode listening on :8090):
+Health check:
 
 ```bash
 curl -s http://127.0.0.1:8090/api/health
 ```
 
-### Flags (desktop and server)
+### Flags
 
-| Flag | Default | Applies to | Description |
-|------|---------|------------|-------------|
-| `--addr` | `127.0.0.1:8090` | Both | HTTP listen address |
-| `--data-dir` | `~/.vibecoding` | Both | SQLite / config directory |
-| `--open` | `false` | **Server** (`vibecoding-server`) | After start, open the system browser to `--addr` |
-| `--log-level` | `info` | Both | `debug` / `info` / `warn` / `error` |
-| `--log-format` | `text` | Both | `text` / `json` |
-| `--log-output` | `stdout` | Both | `stdout` / `stderr` / `discard` / path to file |
-| `--token` | (empty) | Both | Required when `--addr` is not loopback; also via `VIBECODING_TOKEN` |
+| Flag | Default | Notes |
+|------|---------|-------|
+| `--addr` | `127.0.0.1:8090` | HTTP listen address (both modes) |
+| `--data-dir` | `~/.vibecoding` | SQLite, settings, worktrees |
+| `--open` | off | Server: open system browser after start |
+| `--token` | empty | Required when `--addr` is not loopback; or env `VIBECODING_TOKEN` |
+| `--log-level` | `info` | `debug` / `info` / `warn` / `error` |
+| `--log-format` | `text` | `text` / `json` |
+| `--log-output` | `stdout` | `stdout` / `stderr` / `discard` / file path |
 
-Logging uses [`github.com/ymhhh/go-common/logger`](https://github.com/ymhhh/go-common/tree/main/logger).
+---
+
+## How to use the product
+
+1. Open **LLM settings** — save the full chat-completions URL and API key (stored only in local SQLite).
+2. Optionally pick a **coding executor**: built-in LLM (VibeBot) by default, or Claude Code / Cursor / Codex / custom CLI if installed and logged in on this machine.
+3. Create a **Project**, add a local git repository path, click **Validate path**.
+4. Create an **Issue**, chat with the AI, extract the **requirement document**, then the **Dev Spec**. Large issues can be split into sub-requirements (each with its own Spec).
+5. **Accept Spec → Backlog**, then **Start Auto-Dev**. Work runs in isolated git worktrees under `{data-dir}/worktrees/{issueID}/{repoID}/` so your main checkout stays untouched. One commit per sub-requirement when split.
+6. Watch live logs. On success the issue moves to **In Review** with a real file tree, unified diff, and quality-gate results. Failed tests may auto-heal a few rounds; still failing → back to Backlog, worktree kept for inspection.
+7. **Approve & Merge** merges the feature branch into the repo default branch locally (refuses if that branch is checked out and dirty). Optional **Publish to remote** pushes and may run `gh pr create` when `gh` is installed.
+
+Design notes: [docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md). Follow-ups: [docs/review-loop-executor-override.md](./docs/review-loop-executor-override.md).
+
+### Tell Auto-Dev about your repo (`AGENTS.md`)
+
+There is **no in-app setting**. Put a file at the **root of each associated git repository**:
+
+| File | When |
+|------|------|
+| `AGENTS.md` | Preferred — test/lint commands, naming rules, folders not to touch, etc. |
+| `CLAUDE.md` | Used only if `AGENTS.md` is missing |
+| `README.md` | A short excerpt is also included when present |
+
+On Auto-Dev, Vibecoding reads these from the local repo path and injects them into the coding prompt. Edit and commit in the repo; the next run picks up the change.
+
+### Coding executors (optional)
+
+| Preset | Binary | Notes |
+|--------|--------|-------|
+| Built-in LLM | (app settings) | Default. Uses your OpenAI-compatible key. |
+| Claude | `claude` | Install/login Claude Code yourself. |
+| Cursor | `cursor-agent` or `agent` | Do **not** pass Cursor’s `--worktree` — Auto-Dev already uses its own worktree as cwd. |
+| Codex | `codex` | OpenAI Codex CLI. |
+| Custom | your command | Args must include `{prompt}`, and/or enable stdin. |
+
+Skip-permissions / YOLO flags are only used because cwd is the **isolated worktree**, not your primary tree. Vibecoding does not forward its LLM API key into these CLIs.
 
 ---
 
 ## Development
 
-### Desktop live reload (recommended for UI work)
+Desktop hot reload:
 
 ```bash
-make doctor       # once
-make dev-desktop  # wails dev — Go + frontend hot reload in a native window
+make doctor
+make dev-desktop
 ```
 
-### Server + Vite (browser against local API)
+Server + Vite (browser against local API):
 
 ```bash
-# Terminal 1 — API (server binary, no desktop window)
+# Terminal 1
 make backend && ./vibecoding-server
 
-# Terminal 2 — Vite on :3000, proxies /api → :8090
-make dev
+# Terminal 2
+make dev   # http://localhost:3000 — /api proxies to :8090
 ```
 
-Open http://localhost:3000
-
 ---
 
-## Typical product workflow
-
-1. Open **LLM settings** and save the full chat-completions URL + API Key (stored only in local SQLite).
-2. Optionally open **Coding Executor** in the same settings: default is built-in LLM (VibeBot); or pick Claude Code / Cursor / Codex / a custom CLI if installed and logged in on this machine.
-3. Create a **Project** and add a local git repository path (**Validate path**).
-4. Create an **Issue**, chat with the AI, then **Extract Dev Spec**. Large issues can be **split into sub-requirements**, each with its own spec. Chat can update every sub-spec at once, or a single sub-spec.
-5. **Accept Spec → Backlog**, then **Start Auto-Dev**. Split issues are implemented in order, with one commit per sub-requirement. Coding runs in isolated git worktrees under `{data-dir}/worktrees/{issueID}/{repoID}/` (default `~/.vibecoding/worktrees/...`) so your main checkout and dirty files stay untouched.
-6. Watch live logs (SSE), including agent CLI output when that executor is selected. On success the issue moves to **In Review** with a **real** file tree + unified diff and quality-gate results. Failed tests may auto-heal up to `maxHeal` rounds (default 2); still failing returns the issue to Backlog and keeps the worktree for inspection. Rework can target the whole issue or one sub-requirement.
-7. **Approve & Merge** merges the feature branch into the repo default branch locally (refuses if that branch is checked out and dirty), then removes the worktree. You can also open the worktree in Cursor / VS Code from the review UI. Optional **Publish to remote** pushes the feature branch to `origin` and runs `gh pr create` when `gh` is installed — failures are warnings and do not block local merge.
-
-Design details: [docs/autodev-isolation-executor-review.md](./docs/autodev-isolation-executor-review.md). Next slice (inline review comments, start-time executor override, setup/rebase): [docs/review-loop-executor-override.md](./docs/review-loop-executor-override.md).
-
-### Coding executors (optional CLI)
-
-| Preset | Typical binary | Notes |
-|--------|----------------|-------|
-| Built-in LLM | (app settings) | Default. Uses your OpenAI-compatible key. |
-| Claude | `claude` | Install/login via Anthropic Claude Code. App does not install or log in for you. |
-| Cursor | `cursor-agent` or `agent` | Cursor CLI agent. Do **not** pass Cursor’s `--worktree` — Auto-Dev already uses its own worktree as cwd. |
-| Codex | `codex` | OpenAI Codex CLI. |
-| Custom | your command | Must pass `{prompt}` in args and/or enable stdin. |
-
-Unattended permission flags (YOLO / skip-permissions) are only used because **cwd is the isolated worktree**, not your primary working tree. Vibecoding does not forward its LLM API key into these CLIs; they use their own auth (`ANTHROPIC_API_KEY`, Cursor login, etc.).
-
----
-
-## Docker (Server mode only)
-
-The image builds the **server** binary (`-tags server`, `CGO_ENABLED=0`). There is no desktop window inside the container.
+## Docker (server image)
 
 ```bash
 docker build -t vibecoding .
@@ -194,38 +195,28 @@ docker run --rm -p 8090:8090 \
   vibecoding --addr 0.0.0.0:8090 --data-dir /data
 ```
 
-- UI / API from the host: `http://127.0.0.1:8090` (enter the same token when the UI prompts)
-- Configure repo paths inside the app as `/Codes/...` (paths as seen **inside** the container)
+- UI: `http://127.0.0.1:8090` (enter the same token when prompted)
+- Repo paths in the app must be paths **inside** the container (e.g. `/Codes/...`)
 
 ---
 
-## Release builds
+## Release
 
 ```bash
 make release
 ```
 
-Produces under `dist/release/`:
-
-| Artifact | Mode | Notes |
-|----------|------|-------|
-| `vibecoding-server-darwin-arm64` | Server | Cross-compile OK |
-| `vibecoding-server-darwin-amd64` | Server | Cross-compile OK |
-| `vibecoding-server-linux-amd64` | Server | Cross-compile OK |
-| `vibecoding-server-windows-amd64.exe` | Server | Cross-compile OK |
-| `vibecoding-desktop-<host-os>-<arch>` | Desktop | Built **only for the machine running `make release`** |
-
-Desktop cannot be reliably cross-compiled here; build desktop on each target OS (or CI matrix). Linux desktop uses `-tags webkit2_41` by default. Desktop Go builds need Wails tags such as `desktop,production`; on macOS, `make build` / `make release` set `-framework UniformTypeIdentifiers` for you.
+Under `dist/release/`: cross-compiled `vibecoding-server-*` for common platforms, plus one `vibecoding-desktop-<host-os>-<arch>` for the machine that ran the command. Desktop is not reliably cross-compiled here — build it on each target OS.
 
 ---
 
-## Security notes
+## Security
 
-- Server default bind is localhost-only (`127.0.0.1`). Use `--addr 0.0.0.0:8090` only when you intend remote access (e.g. Docker port publish).
-- Binding a non-loopback address **requires** `--token` or env `VIBECODING_TOKEN`. Callers must send `Authorization: Bearer <token>` or `X-Vibecoding-Token` (EventSource may use `?token=`).
-- API keys are stored in the local SQLite DB under `--data-dir`, not in the frontend.
-- Auto-Dev writes inside isolated worktrees under `{data-dir}/worktrees/...` and commits on feature branches; it does not checkout your primary working tree. Agent CLIs may skip interactive permission prompts only in that worktree cwd.
-- Merging refuses when the default branch is checked out and dirty — commit or stash first.
+- Default bind is localhost (`127.0.0.1`). Use `0.0.0.0` only when you intend remote access.
+- Non-loopback bind **requires** `--token` or `VIBECODING_TOKEN`. Send `Authorization: Bearer <token>` or `X-Vibecoding-Token` (EventSource may use `?token=`).
+- API keys live in local SQLite under `--data-dir`, not in the frontend.
+- Auto-Dev writes only inside `{data-dir}/worktrees/...` on feature branches; it does not checkout your primary working tree.
+- Merge refuses when the default branch is checked out and dirty — commit or stash first.
 
 ## License
 
