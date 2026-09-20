@@ -85,6 +85,8 @@ func TestBuildAgentPrompt(t *testing.T) {
 	p := BuildAgentPrompt(CodingRequest{
 		RepoPath:    "/tmp/wt",
 		RepoName:    "demo",
+		Branch:      "hotfix/issue-x",
+		BaseBranch:  "main",
 		Title:       "Add hello",
 		Description: "say hi",
 		Spec:        &model.DevSpec{RawMarkdown: "# Spec\ndo things"},
@@ -95,7 +97,7 @@ func TestBuildAgentPrompt(t *testing.T) {
 			Instructions: "----- AGENTS.md -----\nAlways run make test.\n",
 		}},
 	})
-	for _, need := range []string{"demo", "Add hello", "# Spec", "ONLY sub A", "session-1", "Do NOT git push", "/tmp/wt", "make test", "Repository instructions"} {
+	for _, need := range []string{"demo", "Add hello", "# Spec", "ONLY sub A", "session-1", "Do NOT git push", "/tmp/wt", "make test", "Repository instructions", "hotfix/issue-x", `Stay on git branch "hotfix/issue-x"`} {
 		if !strings.Contains(p, need) {
 			t.Fatalf("prompt missing %q:\n%s", need, p)
 		}

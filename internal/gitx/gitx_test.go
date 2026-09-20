@@ -244,6 +244,52 @@ func TestAddWorktreeRecoversDetachedHEAD(t *testing.T) {
 	}
 }
 
+func TestEnforceFeatureBranchMovesCommitsOffBase(t *testing.T) {
+	dir := initRepo(t, "main")
+	runGit(t, dir, "checkout", "-b", "wip")
+	wt := filepath.Join(t.TempDir(), "wt")
+	if err := AddWorktree(dir, wt, "main", "hotfix/issue-x"); err != nil {
+		t.Fatal(err)
+	}
+	baseBefore, err := RefSHA(dir, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runGit(t, wt, "checkout", "main")
+	writeFile(t, filepath.Join(wt, "fix.txt"), "x\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "feat: on base")
+	runGit(t, wt, "checkout", "-B", "hotfix/issue-x")
+
+	relocated, err := EnforceFeatureBranch(dir, wt, "main", "hotfix/issue-x", baseBefore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !relocated {
+		t.Fatal("expected relocated=true")
+	}
+	mainNow, _ := RefSHA(dir, "refs/heads/main")
+	if mainNow != baseBefore {
+		t.Fatalf("main not restored")
+	}
+	featNow, _ := RefSHA(dir, "refs/heads/hotfix/issue-x")
+	if featNow == baseBefore {
+		t.Fatal("feature should keep the commit")
+	}
+	cur, err := CurrentBranch(wt)
+	if err != nil || cur != "hotfix/issue-x" {
+		t.Fatalf("worktree branch=%q err=%v", cur, err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "fix.txt")); err != nil {
+		t.Fatal("expected commit files on the feature worktree")
+	}
+	mainB, _ := CurrentBranch(dir)
+	if mainB != "wip" {
+		t.Fatalf("main working tree branch=%s", mainB)
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	dir := initRepo(t, "main")
 	wt := filepath.Join(t.TempDir(), "gone")

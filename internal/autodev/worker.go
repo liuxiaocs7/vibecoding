@@ -210,12 +210,12 @@ func (r *Runner) run(ctx context.Context, jobID string) error {
 
 	var quality *model.QualityGate
 	if issue.HasSubRequirements() {
-		quality, err = r.developSubs(ctx, job, issue, wtRepos, cfg, execCfg, progress)
+		quality, err = r.developSubs(ctx, job, issue, sessions, cfg, execCfg, progress)
 		if err != nil {
 			return err
 		}
 	} else {
-		quality, err = r.developOne(ctx, job, issue, wtRepos, cfg, execCfg, issue.DevSpec, issue.Title, issue.PromptDescription(), "", 40, 90, true, progress)
+		quality, err = r.developOne(ctx, job, issue, sessions, cfg, execCfg, issue.DevSpec, issue.Title, issue.PromptDescription(), "", 40, 90, true, progress)
 		if err != nil {
 			return err
 		}

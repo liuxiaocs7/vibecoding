@@ -14,6 +14,8 @@ import (
 type CodingRequest struct {
 	RepoPath    string
 	RepoName    string
+	Branch      string // isolated Auto-Dev branch; agent must stay on it
+	BaseBranch  string // merge target; agent must not commit here
 	Title       string
 	Description string
 	Spec        *model.DevSpec

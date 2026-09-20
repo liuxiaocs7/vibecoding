@@ -15,7 +15,7 @@ func (r *Runner) developSubs(
 	ctx context.Context,
 	job *model.AutoDevJob,
 	issue *model.Issue,
-	repos []model.GitRepo,
+	sessions []worktreeSession,
 	cfg model.ModelConfig,
 	execCfg model.ExecutorConfig,
 	progress func(int, string, string) error,
@@ -87,7 +87,7 @@ func (r *Runner) developSubs(
 			extra.WriteString(fmt.Sprintf("- sibling [%d] %s (%s)\n", sib.Order, sib.Title, sib.Status))
 		}
 
-		q, err := r.developOne(ctx, job, issue, repos, cfg, execCfg, sub.DevSpec, sub.Title, firstNonEmpty(sub.Description, issue.PromptDescription()), extra.String(), pStart, pEnd, k == n-1, progress)
+		q, err := r.developOne(ctx, job, issue, sessions, cfg, execCfg, sub.DevSpec, sub.Title, firstNonEmpty(sub.Description, issue.PromptDescription()), extra.String(), pStart, pEnd, k == n-1, progress)
 		if err != nil {
 			sub.Status = model.SubReqFailed
 			issue.UpdatedAt = model.NowISO()
@@ -97,8 +97,8 @@ func (r *Runner) developSubs(
 		lastQuality = q
 
 		sha := ""
-		if len(repos) > 0 {
-			sha, _ = gitx.HeadSHA(repos[0].Path)
+		if len(sessions) > 0 {
+			sha, _ = gitx.HeadSHA(sessions[0].WTPath)
 		}
 		if fresh, err := r.Store.GetIssue(issue.ID); err == nil && fresh != nil {
 			*issue = *fresh
@@ -131,7 +131,7 @@ func (r *Runner) developOne(
 	ctx context.Context,
 	job *model.AutoDevJob,
 	issue *model.Issue,
-	repos []model.GitRepo,
+	sessions []worktreeSession,
 	cfg model.ModelConfig,
 	execCfg model.ExecutorConfig,
 	spec *model.DevSpec,
@@ -142,6 +142,15 @@ func (r *Runner) developOne(
 ) (*model.QualityGate, error) {
 	if spec == nil {
 		return nil, fmt.Errorf("missing Dev Spec")
+	}
+	repos := sessionsToRepos(sessions)
+	baseSHAs := make([]string, len(sessions))
+	for i, s := range sessions {
+		sha, err := gitx.RefSHA(s.MainPath, "refs/heads/"+s.Base)
+		if err != nil {
+			return nil, fmt.Errorf("snapshot base %s: %w", s.Repo.Name, err)
+		}
+		baseSHAs[i] = sha
 	}
 	span := pEnd - pStart
 	if span < 8 {
@@ -183,14 +192,17 @@ func (r *Runner) developOne(
 		}
 
 		var allChanges []model.SpecFileChange
-		for _, repo := range repos {
+		for _, s := range sessions {
+			repo := s.Repo
 			snaps, err := repocontext.Collect([]model.GitRepo{repo}, spec.FileChanges)
 			if err != nil {
 				return quality, err
 			}
 			req := executor.CodingRequest{
-				RepoPath:    repo.Path,
+				RepoPath:    s.WTPath,
 				RepoName:    repo.Name,
+				Branch:      s.Branch,
+				BaseBranch:  s.Base,
 				Title:       title,
 				Description: desc,
 				Spec:        spec,
@@ -304,6 +316,15 @@ func (r *Runner) developOne(
 
 	if err := progress(pCommit, "committing", fmt.Sprintf("Committing %s...", title)); err != nil {
 		return quality, err
+	}
+	for i, s := range sessions {
+		relocated, err := gitx.EnforceFeatureBranch(s.MainPath, s.WTPath, s.Base, s.Branch, baseSHAs[i])
+		if err != nil {
+			return quality, fmt.Errorf("isolate branch %s: %w", s.Repo.Name, err)
+		}
+		if relocated {
+			_ = r.appendLog(job, "committing", fmt.Sprintf("[%s] moved commits off %s onto %s and restored the base branch", s.Repo.Name, s.Base, s.Branch), "")
+		}
 	}
 	for _, repo := range repos {
 		dirty, err := gitx.IsDirty(repo.Path)

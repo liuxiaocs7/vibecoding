@@ -239,6 +239,87 @@ func TestRunSecondPassReusesWorktree(t *testing.T) {
 	}
 }
 
+func TestRunRelocatesCommitsOffBase(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	cmd := exec.Command("git", "checkout", "-b", "wip")
+	cmd.Dir = repoPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("checkout wip: %v\n%s", err, out)
+	}
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	baseBefore, err := gitx.RefSHA(repoPath, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	fake := &fakeExecutor{
+		name: "fake-on-base",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			git := func(args ...string) error {
+				c := exec.Command("git", args...)
+				c.Dir = req.RepoPath
+				c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+				out, err := c.CombinedOutput()
+				if err != nil {
+					return fmt.Errorf("git %v: %v\n%s", args, err, out)
+				}
+				return nil
+			}
+			if err := git("checkout", req.BaseBranch); err != nil {
+				return executor.Result{}, err
+			}
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			if err := git("add", "-A"); err != nil {
+				return executor.Result{}, err
+			}
+			if err := git("commit", "-m", "feat: on base"); err != nil {
+				return executor.Result{}, err
+			}
+			if err := git("checkout", "-B", req.Branch); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{}, nil
+		},
+	}
+	r := &Runner{
+		Store:        store,
+		Hub:          NewHub(),
+		WorktreeRoot: wtRoot,
+		NewExecutor:  func(cfg model.ExecutorConfig) (executor.Executor, error) { return fake, nil },
+	}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	baseAfter, err := gitx.RefSHA(repoPath, "refs/heads/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseAfter != baseBefore {
+		t.Fatalf("base branch moved: %s -> %s", baseBefore, baseAfter)
+	}
+	issue, _ := store.GetIssue("issue-1")
+	if issue == nil || issue.PRInfo == nil || issue.PRInfo.BranchName == "" {
+		t.Fatalf("missing PR branch: %+v", issue)
+	}
+	featSHA, err := gitx.RefSHA(repoPath, "refs/heads/"+issue.PRInfo.BranchName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if featSHA == baseBefore {
+		t.Fatal("feature branch should keep the relocated commit")
+	}
+	if _, err := os.Stat(filepath.Join(wtRoot, "issue-1", "repo-1", "hello.txt")); err != nil {
+		t.Fatalf("expected file on feature worktree: %v", err)
+	}
+	cur, _ := gitx.CurrentBranch(repoPath)
+	if cur != "wip" {
+		t.Fatalf("main working tree branch=%s", cur)
+	}
+}
+
 func TestRunReworkReplacesStaleWorktree(t *testing.T) {
 	repoPath := t.TempDir()
 	initGitRepo(t, repoPath)

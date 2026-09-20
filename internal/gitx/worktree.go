@@ -93,6 +93,66 @@ func insideWorkTree(dir string) bool {
 	return err == nil && strings.TrimSpace(out) == "true"
 }
 
+// EnforceFeatureBranch undoes an agent checking out / committing on the base
+// branch. Commits that landed on base are kept on feature, then base is restored
+// to baseSHABefore. The worktree is left on feature.
+func EnforceFeatureBranch(mainPath, worktreePath, base, feature, baseSHABefore string) (relocated bool, err error) {
+	mainPath = strings.TrimSpace(mainPath)
+	worktreePath = strings.TrimSpace(worktreePath)
+	feature = strings.TrimSpace(feature)
+	baseSHABefore = strings.TrimSpace(baseSHABefore)
+	if mainPath == "" || worktreePath == "" || feature == "" || baseSHABefore == "" {
+		return false, fmt.Errorf("mainPath, worktreePath, feature, and baseSHABefore are required")
+	}
+	baseResolved, err := ResolveBaseBranch(mainPath, base)
+	if err != nil {
+		return false, err
+	}
+	if baseResolved == feature {
+		return false, fmt.Errorf("feature branch %q must not be the base branch", feature)
+	}
+	baseRef := "refs/heads/" + baseResolved
+	curBase, err := RefSHA(mainPath, baseRef)
+	if err != nil {
+		return false, fmt.Errorf("read base %s: %w", baseResolved, err)
+	}
+
+	if curBase != baseSHABefore {
+		if err := checkoutFeatureAt(worktreePath, feature, curBase); err != nil {
+			return false, fmt.Errorf("move commits onto %s: %w", feature, err)
+		}
+		if _, err := run(mainPath, "update-ref", baseRef, baseSHABefore); err != nil {
+			return false, fmt.Errorf("restore base branch %s: %w", baseResolved, err)
+		}
+		relocated = true
+	} else if cur, err := CurrentBranch(worktreePath); err != nil || cur != feature {
+		tip, tipErr := RefSHA(worktreePath, "HEAD")
+		if tipErr != nil {
+			return false, fmt.Errorf("read worktree HEAD: %w", tipErr)
+		}
+		if err := checkoutFeatureAt(worktreePath, feature, tip); err != nil {
+			return false, fmt.Errorf("return worktree to %s: %w", feature, err)
+		}
+	}
+
+	cur, err := CurrentBranch(worktreePath)
+	if err != nil || cur != feature {
+		return relocated, fmt.Errorf("worktree not on feature branch %s (on %q)", feature, cur)
+	}
+	gotBase, err := RefSHA(mainPath, baseRef)
+	if err != nil {
+		return relocated, err
+	}
+	if gotBase != baseSHABefore {
+		return relocated, fmt.Errorf("base branch %s still moved after restore", baseResolved)
+	}
+	return relocated, nil
+}
+
+func checkoutFeatureAt(worktreePath, feature, tip string) error {
+	_, err := run(worktreePath, "checkout", "-B", feature, tip)
+	return err
+}
 
 func samePath(a, b string) bool {
 	a = filepath.Clean(a)

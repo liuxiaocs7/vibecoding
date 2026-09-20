@@ -455,6 +455,16 @@ func HeadSHA(dir string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// RefSHA returns the full SHA for ref (e.g. HEAD or refs/heads/main).
+func RefSHA(dir, ref string) (string, error) {
+	ref = strings.TrimSpace(ref)
+	if dir == "" || ref == "" {
+		return "", fmt.Errorf("dir and ref are required")
+	}
+	out, err := run(dir, "rev-parse", "--verify", ref)
+	return strings.TrimSpace(out), err
+}
+
 func ListTrackedFiles(dir string, limit int) ([]string, error) {
 	out, err := run(dir, "ls-files")
 	if err != nil {
