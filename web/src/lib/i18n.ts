@@ -106,9 +106,10 @@ export const TRANSLATIONS = {
     stageFocusReviewTitle: 'Stage Focus: Code PR Review & Quality Gate',
     stageFocusReviewDesc: 'Inspect real diffs and quality-gate results before merging.',
     approveMergeBtn: 'Approve & Merge',
+    mergeInto: 'Merge into',
 
     stageFocusCompletedTitle: 'Stage Focus: Delivered & Archived',
-    stageFocusCompletedDesc: 'Branch successfully merged into main. Complete Spec & quality report are archived.',
+    stageFocusCompletedDesc: 'Branch successfully merged into the selected target. Complete Spec & quality report are archived.',
 
     // Review Tab Details
     codeReviewReport: 'Code Quality & Review Report',
@@ -415,9 +416,10 @@ export const TRANSLATIONS = {
     stageFocusReviewTitle: '阶段侧重点: 代码 PR 审查与质量门禁',
     stageFocusReviewDesc: '合并前请查看真实 diff 与质量门禁结果。',
     approveMergeBtn: '同意合并 (Approve & Merge)',
+    mergeInto: '合并到',
 
     stageFocusCompletedTitle: '阶段侧重点: 已完成交付与全额归档',
-    stageFocusCompletedDesc: '需求对应分支已成功合并至 main 主干，完整 Spec 与质量报告已存储。',
+    stageFocusCompletedDesc: '需求对应分支已成功合并至所选目标分支，完整 Spec 与质量报告已存储。',
 
     // Review Tab Details
     codeReviewReport: '代码自动化评审与质量门禁结果',

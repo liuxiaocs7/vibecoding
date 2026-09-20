@@ -363,6 +363,39 @@ func TestSummarizeStreamJSON(t *testing.T) {
 	if got := sessionIDFromJSONLine(`{"sessionId":"xyz"}`); got != "xyz" {
 		t.Fatal(got)
 	}
+	if got := summarizeStreamJSON(`{"type":"user","message":{"content":[{"type":"text","text":"PROMPT"}]}}`); got != "" {
+		t.Fatalf("user prompt should be skipped, got %q", got)
+	}
+	if got := summarizeStreamJSON(`{"type":"system","message":{"content":"init"}}`); got != "" {
+		t.Fatalf("system should be skipped, got %q", got)
+	}
+	if got := summarizeStreamJSON(`{"type":"thinking","subtype":"delta","text":"正在修接口"}`); got != "正在修接口" {
+		t.Fatalf("thinking=%q", got)
+	}
+	userLine := `{"type":"user","message":{"role":"user","content":[{"type":"text","text":"You are implementing"}]}}`
+	if _, _, handled := classifyAgentLine(userLine); !handled {
+		t.Fatal("user event should be handled (not dumped raw)")
+	}
+}
+
+func TestScanAgentOutputSkipsPromptJSON(t *testing.T) {
+	t.Parallel()
+	in := strings.NewReader(`{"type":"user","message":{"content":[{"type":"text","text":"SECRET_PROMPT"}]}}
+{"type":"thinking","subtype":"delta","text":"hello "}
+{"type":"thinking","subtype":"delta","text":"world"}
+{"type":"assistant"}
+`)
+	var msgs []string
+	scanAgentOutput(in, func(phase, msg, details string) {
+		msgs = append(msgs, msg)
+	}, "cursor")
+	joined := strings.Join(msgs, "\n")
+	if strings.Contains(joined, "SECRET_PROMPT") || strings.Contains(joined, `"type"`) {
+		t.Fatalf("dumped raw json: %q", joined)
+	}
+	if !strings.Contains(joined, "hello world") {
+		t.Fatalf("want coalesced thinking, got %q", joined)
+	}
 }
 
 func TestDisplayName(t *testing.T) {

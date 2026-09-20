@@ -175,7 +175,12 @@ export const api = {
     }),
   listExecutors: () =>
     request<{ executors: import('../types').ExecutorProbe[]; current: string }>('/api/executors'),
-  getIssueDiff: (id: string) => request<import('../types').IssueDiff>(`/api/issues/${id}/diff`),
+  getIssueDiff: (id: string, base?: string) => {
+    const q = base ? `?base=${encodeURIComponent(base)}` : '';
+    return request<import('../types').IssueDiff>(`/api/issues/${id}/diff${q}`);
+  },
+  listIssueBranches: (id: string) =>
+    request<{ branches: string[]; default?: string; feature?: string }>(`/api/issues/${id}/branches`),
   rebaseIssue: (id: string) =>
     request<{ ok: boolean; baseBranch?: string; repos?: { repoId: string; ahead: number; behind: number; error?: string }[] }>(
       `/api/issues/${id}/rebase`,
@@ -212,8 +217,11 @@ export const api = {
     request<Issue>(`/api/issues/${id}`, { method: 'PUT', body: JSON.stringify(issue) }),
   deleteIssue: (id: string) =>
     request<{ ok: boolean }>(`/api/issues/${id}`, { method: 'DELETE' }),
-  approveMerge: (id: string) =>
-    request<Issue>(`/api/issues/${id}/approve-merge`, { method: 'POST', body: '{}' }),
+  approveMerge: (id: string, targetBranch?: string) =>
+    request<Issue>(`/api/issues/${id}/approve-merge`, {
+      method: 'POST',
+      body: JSON.stringify(targetBranch ? { targetBranch } : {}),
+    }),
 
   validateRepo: (path: string) =>
     request<{

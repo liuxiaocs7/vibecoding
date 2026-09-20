@@ -13,6 +13,7 @@ interface DiffReviewProps {
   className?: string;
   canComment?: boolean;
   canRebase?: boolean;
+  compareBase?: string;
   onCommentsChange?: (comments: DiffComment[]) => void;
 }
 
@@ -71,6 +72,7 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
   className,
   canComment = false,
   canRebase = false,
+  compareBase,
   onCommentsChange,
 }) => {
   const t = TRANSLATIONS[lang];
@@ -92,7 +94,7 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
     setLoading(true);
     setError('');
     api
-      .getIssueDiff(issueId)
+      .getIssueDiff(issueId, compareBase || undefined)
       .then((d) => {
         if (cancelled) return;
         setData(d);
@@ -120,7 +122,7 @@ export const DiffReview: React.FC<DiffReviewProps> = ({
     return () => {
       cancelled = true;
     };
-  }, [issueId]);
+  }, [issueId, compareBase]);
 
   useEffect(() => loadDiff(), [loadDiff]);
 

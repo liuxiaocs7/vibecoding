@@ -101,12 +101,18 @@ func (s *Server) handleIssueDiff(w http.ResponseWriter, r *http.Request) {
 		Executor:   issue.PRInfo.Executor,
 		Quality:    issue.PRInfo.Quality,
 	}
+	if q := gitx.SanitizeBranchName(r.URL.Query().Get("base")); q != "" {
+		resp.BaseBranch = q
+	}
 	for _, rid := range issue.AssociatedRepoIDs {
 		for _, gr := range proj.GitRepos {
 			if gr.ID != rid {
 				continue
 			}
-			base := issue.PRInfo.BaseBranch
+			base := gitx.SanitizeBranchName(r.URL.Query().Get("base"))
+			if base == "" {
+				base = issue.PRInfo.BaseBranch
+			}
 			if base == "" {
 				base = gr.DefaultBranch
 			}
@@ -371,15 +377,28 @@ func (s *Server) handleOpenEditor(w http.ResponseWriter, r *http.Request) {
 }
 
 // approveMergeSafe merges via MergeBranchAt and cleans worktrees.
-func (s *Server) approveMergeSafe(issue *model.Issue, repos []model.GitRepo) error {
+func (s *Server) approveMergeSafe(issue *model.Issue, repos []model.GitRepo, targetBranch string) error {
 	branch := issue.PRInfo.BranchName
+	mergedInto := ""
 	for _, repo := range repos {
-		base := issue.PRInfo.BaseBranch
+		base := gitx.SanitizeBranchName(targetBranch)
+		if base == "" {
+			base = issue.PRInfo.BaseBranch
+		}
 		if base == "" {
 			base = repo.DefaultBranch
 		}
+		if base == "" {
+			return fmt.Errorf("%s: merge target branch required", repo.Name)
+		}
+		if base == branch {
+			return fmt.Errorf("%s: cannot merge %s into itself", repo.Name, branch)
+		}
 		if err := gitx.MergeBranchAt(repo.Path, base, branch); err != nil {
 			return fmt.Errorf("%s: %w", repo.Name, err)
+		}
+		if mergedInto == "" {
+			mergedInto = base
 		}
 	}
 	for _, wt := range issue.PRInfo.Worktrees {
@@ -391,15 +410,73 @@ func (s *Server) approveMergeSafe(issue *model.Issue, repos []model.GitRepo) err
 	}
 	issue.PRInfo.Worktrees = nil
 	issue.PRInfo.Status = "merged"
+	if mergedInto != "" {
+		issue.PRInfo.BaseBranch = mergedInto
+	}
 	issue.Status = model.StatusCompleted
+	into := mergedInto
+	if into == "" {
+		into = "target branch"
+	}
 	issue.AutoDevLogs = append(issue.AutoDevLogs, model.AutoDevLog{
 		ID:        "log-" + uuid.NewString()[:8],
 		Timestamp: time.Now().Format("15:04:05"),
 		Phase:     "completed",
-		Message:   "Developer approved; merged into default branch (worktrees removed).",
+		Message:   fmt.Sprintf("Developer approved; merged into %s (worktrees removed).", into),
 	})
 	issue.UpdatedAt = model.NowISO()
 	return s.Store.UpsertIssue(*issue)
+}
+
+func (s *Server) handleIssueBranches(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	proj, err := s.Store.GetProject(issue.ProjectID)
+	if err != nil || proj == nil {
+		writeErr(w, 404, "project not found")
+		return
+	}
+	seen := map[string]bool{}
+	var branches []string
+	def := ""
+	if issue.PRInfo != nil {
+		def = issue.PRInfo.BaseBranch
+	}
+	feature := ""
+	if issue.PRInfo != nil {
+		feature = issue.PRInfo.BranchName
+	}
+	for _, rid := range issue.AssociatedRepoIDs {
+		for _, gr := range proj.GitRepos {
+			if gr.ID != rid {
+				continue
+			}
+			if def == "" {
+				def = gr.DefaultBranch
+			}
+			names, err := gitx.ListLocalBranches(gr.Path)
+			if err != nil {
+				writeErr(w, 500, fmt.Sprintf("%s: %v", gr.Name, err))
+				return
+			}
+			for _, n := range names {
+				if n == feature || seen[n] {
+					continue
+				}
+				seen[n] = true
+				branches = append(branches, n)
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{
+		"branches": branches,
+		"default":  def,
+		"feature":  feature,
+	})
 }
 
 func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
@@ -413,6 +490,10 @@ func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, "no PR/branch to merge")
 		return
 	}
+	var body struct {
+		TargetBranch string `json:"targetBranch"`
+	}
+	_ = decodeJSON(r, &body)
 	proj, err := s.Store.GetProject(issue.ProjectID)
 	if err != nil || proj == nil {
 		writeErr(w, 404, "project not found")
@@ -426,7 +507,7 @@ func (s *Server) handleApproveMerge(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err := s.approveMergeSafe(issue, repos); err != nil {
+	if err := s.approveMergeSafe(issue, repos, body.TargetBranch); err != nil {
 		// Dirty default branch / merge conflicts surface as 409-ish client errors.
 		msg := err.Error()
 		status := 500

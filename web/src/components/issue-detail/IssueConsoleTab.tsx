@@ -124,7 +124,7 @@ export const IssueConsoleTab: React.FC<IssueConsoleTabProps> = ({
                     } as Record<string, string>)[log.phase] || log.phase
                   : log.phase}
               </span>
-              <span>{log.message}</span>
+              <span className="break-words min-w-0">{log.message}</span>
             </div>
           ))
         )}

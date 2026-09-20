@@ -146,19 +146,36 @@ func scanAgentOutput(r io.Reader, emit Emit, preset string) string {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	sessionID := ""
+	var think strings.Builder
+	flushThink := func() {
+		if s := strings.TrimSpace(think.String()); s != "" {
+			emit("agent", truncate(s, 500), "")
+		}
+		think.Reset()
+	}
 	for sc.Scan() {
 		line := sc.Text()
 		if sid := sessionIDFromJSONLine(line); sid != "" {
 			sessionID = sid
 		}
-		if msg := summarizeStreamJSON(line); msg != "" {
-			emit("agent", msg, "")
+		msg, kind, handled := classifyAgentLine(line)
+		if handled {
+			if kind == "thinking" {
+				think.WriteString(msg)
+				continue
+			}
+			flushThink()
+			if msg != "" {
+				emit("agent", msg, "")
+			}
 			continue
 		}
+		flushThink()
 		if strings.TrimSpace(line) != "" {
 			emit("agent", truncate(line, 500), "")
 		}
 	}
+	flushThink()
 	return sessionID
 }
 
@@ -181,41 +198,60 @@ func sessionIDFromJSONLine(line string) string {
 
 // summarizeStreamJSON extracts a short tool/message line from Claude/Cursor stream-json.
 func summarizeStreamJSON(line string) string {
-	line = strings.TrimSpace(line)
-	if line == "" || line[0] != '{' {
-		return ""
-	}
-	var obj map[string]any
-	if err := json.Unmarshal([]byte(line), &obj); err != nil {
-		return ""
-	}
-	if t, _ := obj["type"].(string); t != "" {
-		switch t {
-		case "assistant", "result", "system":
-			if s := extractText(obj); s != "" {
-				return truncate(s, 400)
-			}
-			return t
-		case "tool_use", "tool_call", "tool_result":
-			name, _ := obj["name"].(string)
-			if name == "" {
-				if tool, ok := obj["tool"].(map[string]any); ok {
-					name, _ = tool["name"].(string)
-				}
-			}
-			if name != "" {
-				return "tool: " + name
-			}
-			return t
-		}
-	}
-	if name, _ := obj["name"].(string); name != "" {
-		return "tool: " + name
+	msg, _, handled := classifyAgentLine(line)
+	if handled {
+		return msg
 	}
 	return ""
 }
 
+// classifyAgentLine parses one CLI stdout line.
+// handled=true means it is stream-json (never dump the raw payload).
+func classifyAgentLine(line string) (msg, kind string, handled bool) {
+	line = strings.TrimSpace(line)
+	if line == "" || line[0] != '{' {
+		return "", "", false
+	}
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(line), &obj); err != nil {
+		return "", "", false
+	}
+	t, _ := obj["type"].(string)
+	switch t {
+	case "user", "system":
+		return "", t, true
+	case "thinking", "thinking_delta":
+		return extractText(obj), "thinking", true
+	case "assistant", "result":
+		if s := extractText(obj); s != "" {
+			return truncate(s, 400), t, true
+		}
+		return "", t, true
+	case "tool_use", "tool_call", "tool_result":
+		name, _ := obj["name"].(string)
+		if name == "" {
+			if tool, ok := obj["tool"].(map[string]any); ok {
+				name, _ = tool["name"].(string)
+			}
+		}
+		if name != "" {
+			return "tool: " + name, "tool", true
+		}
+		return "", "tool", true
+	}
+	if t != "" {
+		if s := extractText(obj); s != "" {
+			return truncate(s, 400), t, true
+		}
+		return "", t, true
+	}
+	return "", "", false
+}
+
 func extractText(obj map[string]any) string {
+	if s, ok := obj["text"].(string); ok && strings.TrimSpace(s) != "" {
+		return s
+	}
 	if s, ok := obj["message"].(string); ok && s != "" {
 		return s
 	}
@@ -223,11 +259,36 @@ func extractText(obj map[string]any) string {
 		return s
 	}
 	if content, ok := obj["message"].(map[string]any); ok {
-		if s, ok := content["content"].(string); ok {
+		if s := contentString(content["content"]); s != "" {
+			return s
+		}
+		if s, ok := content["text"].(string); ok && s != "" {
 			return s
 		}
 	}
-	return ""
+	return contentString(obj["content"])
+}
+
+func contentString(v any) string {
+	switch c := v.(type) {
+	case string:
+		return c
+	case []any:
+		var b strings.Builder
+		for _, item := range c {
+			switch it := item.(type) {
+			case string:
+				b.WriteString(it)
+			case map[string]any:
+				if s, _ := it["text"].(string); s != "" {
+					b.WriteString(s)
+				}
+			}
+		}
+		return b.String()
+	default:
+		return ""
+	}
 }
 
 func truncate(s string, n int) string {

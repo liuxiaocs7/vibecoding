@@ -1,8 +1,9 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Issue } from '../../types';
 import { Language, getTranslation, ThemeStyle } from '../../lib/i18n';
 import { THEME_CONFIGS } from '../../lib/theme';
 import { DiffReview } from '../DiffReview';
+import { api } from '../../lib/api';
 import {
   GitPullRequest,
   RotateCcw,
@@ -28,6 +29,8 @@ interface IssueReviewTabProps {
   handleApproveMerge: () => Promise<void>;
   handlePublishRemote: () => Promise<void>;
   publishingRemote?: boolean;
+  mergeTarget: string;
+  setMergeTarget: (v: string) => void;
   onCommentsChange: (comments: Issue['reviewComments']) => void;
 }
 
@@ -47,10 +50,32 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
   handleApproveMerge,
   handlePublishRemote,
   publishingRemote,
+  mergeTarget,
+  setMergeTarget,
   onCommentsChange,
 }) => {
   const themeConfig = THEME_CONFIGS[themeStyle] || THEME_CONFIGS.light;
   const t = getTranslation(lang);
+  const [branches, setBranches] = useState<string[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .listIssueBranches(issue.id)
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.branches || [];
+        setBranches(list);
+        if (!mergeTarget) {
+          const next = res.default || list[0] || '';
+          if (next) setMergeTarget(next);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [issue.id]);
 
   return (
     <div className="flex-1 p-6 overflow-y-auto space-y-6">
@@ -72,17 +97,49 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
               {issue.status === 'completed' ? 'MERGED (已合并)' : 'OPEN (待评审)'}
             </span>
           </div>
-          <p className={`text-xs mt-1 ${themeConfig.textMuted}`}>
-            目标分支: <code className="text-indigo-600 dark:text-indigo-300 font-mono">{issue.prInfo?.branchName || `feature/issue-${issue.id}`}</code> | 提交者: {issue.prInfo?.author || 'AI Auto-Dev Agent'}
+          <div className={`text-xs mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 ${themeConfig.textMuted}`}>
+            <span className="inline-flex items-center gap-1.5">
+              {t.mergeInto}
+              {issue.status === 'in_review' && branches.length > 0 ? (
+                <span className="min-w-[10rem]">
+                  <ThemedSelect
+                    value={mergeTarget || issue.prInfo?.baseBranch || ''}
+                    onChange={(e) => setMergeTarget(e.target.value)}
+                    isLight={themeConfig.isLight}
+                    chevronClassName={themeConfig.textSecondary}
+                    className={`px-2 py-0.5 border rounded-md text-[11px] font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                  >
+                    {mergeTarget && !branches.includes(mergeTarget) ? (
+                      <option value={mergeTarget}>{mergeTarget}</option>
+                    ) : null}
+                    {branches.map((b) => (
+                      <option key={b} value={b}>
+                        {b}
+                      </option>
+                    ))}
+                  </ThemedSelect>
+                </span>
+              ) : (
+                <code className="text-indigo-600 dark:text-indigo-300 font-mono">
+                  {mergeTarget || issue.prInfo?.baseBranch || '—'}
+                </code>
+              )}
+            </span>
+            <span>
+              {lang === 'zh' ? '特性分支' : 'feature'}:{' '}
+              <code className="text-indigo-600 dark:text-indigo-300 font-mono">
+                {issue.prInfo?.branchName || `feature/issue-${issue.id}`}
+              </code>
+            </span>
+            <span>
+              {lang === 'zh' ? '提交者' : 'author'}: {issue.prInfo?.author || 'AI Auto-Dev Agent'}
+            </span>
             {issue.prInfo?.remoteUrl ? (
-              <>
-                {' | '}
-                <a href={issue.prInfo.remoteUrl} target="_blank" rel="noreferrer" className="text-sky-600 underline">
-                  {issue.prInfo.remoteUrl}
-                </a>
-              </>
+              <a href={issue.prInfo.remoteUrl} target="_blank" rel="noreferrer" className="text-sky-600 underline">
+                {issue.prInfo.remoteUrl}
+              </a>
             ) : null}
-          </p>
+          </div>
           {splitIssue && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {(issue.subRequirements || []).map((sub) => (
@@ -144,6 +201,7 @@ export const IssueReviewTab: React.FC<IssueReviewTabProps> = ({
         lang={lang}
         canComment={issue.status === 'in_review'}
         canRebase={issue.status === 'in_review' || issue.status === 'backlog'}
+        compareBase={mergeTarget}
         onCommentsChange={onCommentsChange}
       />
 

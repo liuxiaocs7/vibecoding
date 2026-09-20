@@ -153,6 +153,37 @@ func ResolveBaseBranch(dir, preferred string) (string, error) {
 	return "", fmt.Errorf("no local branch found to use as Auto-Dev base")
 }
 
+// ListLocalBranches returns local branch names, newest commit first.
+func ListLocalBranches(dir string) ([]string, error) {
+	out, err := run(dir, "for-each-ref", "--format=%(refname:short)", "--sort=-committerdate", "refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	seen := map[string]bool{}
+	for _, line := range strings.Split(out, "\n") {
+		name := strings.TrimSpace(line)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	return names, nil
+}
+
+// SanitizeBranchName rejects empty / traversal / flag-like names.
+func SanitizeBranchName(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "HEAD" || strings.HasPrefix(s, "-") {
+		return ""
+	}
+	if strings.Contains(s, "..") || strings.ContainsAny(s, " \t\n\\") {
+		return ""
+	}
+	return s
+}
+
 func countFiles(root string) int {
 	n := 0
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {

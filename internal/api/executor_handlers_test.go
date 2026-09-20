@@ -276,6 +276,81 @@ func TestApproveMergeSuccessRemovesWorktrees(t *testing.T) {
 	}
 }
 
+func TestApproveMergeIntoChosenBranch(t *testing.T) {
+	srv, store := testServer(t)
+	repoDir := t.TempDir()
+	initRepo(t, repoDir, "main")
+	run := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run(repoDir, "checkout", "-b", "hotfix_1")
+	run(repoDir, "checkout", "main")
+	wtPath := filepath.Join(t.TempDir(), "issue-hot", "r1")
+	run(repoDir, "worktree", "add", "-b", "ai-dev/issue-hot", wtPath, "main")
+	if err := os.WriteFile(filepath.Join(wtPath, "feat.txt"), []byte("hot\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run(wtPath, "add", ".")
+	run(wtPath, "commit", "-m", "feat")
+
+	repo := model.GitRepo{ID: "r1", Name: "demo", Path: repoDir, DefaultBranch: "main"}
+	proj := model.Project{ID: "p1", Name: "p", GitRepos: []model.GitRepo{repo}, CreatedAt: model.NowISO(), UpdatedAt: model.NowISO()}
+	if err := store.UpsertProject(proj); err != nil {
+		t.Fatal(err)
+	}
+	issue := model.Issue{
+		ID: "i-hot", ProjectID: "p1", Title: "t", Status: model.StatusInReview,
+		AssociatedRepoIDs: []string{"r1"},
+		PRInfo: &model.PRInfo{
+			ID: "pr-hot", BranchName: "ai-dev/issue-hot", Title: "t", Status: "open",
+			BaseBranch: "main", Author: "bot", CreatedAt: model.NowISO(),
+			Worktrees: []model.WorktreeRef{{RepoID: "r1", RepoName: "demo", Path: wtPath}},
+		},
+		CreatedAt: model.NowISO(), UpdatedAt: model.NowISO(),
+	}
+	if err := store.UpsertIssue(issue); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(map[string]string{"targetBranch": "hotfix_1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/issues/i-hot/approve-merge", bytes.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("approve status=%d %s", rr.Code, rr.Body.String())
+	}
+	var got model.Issue
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.PRInfo == nil || got.PRInfo.BaseBranch != "hotfix_1" {
+		t.Fatalf("baseBranch=%v", got.PRInfo)
+	}
+	out, err := exec.Command("git", "-C", repoDir, "show", "hotfix_1:feat.txt").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "hot") {
+		t.Fatalf("hotfix_1:feat.txt %v %s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(repoDir, "feat.txt")); !os.IsNotExist(err) {
+		t.Fatal("main working tree should not have received the merge")
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/api/issues/i-hot/branches", nil)
+	rr = httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("branches status=%d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "hotfix_1") {
+		t.Fatalf("expected hotfix_1 in branches: %s", rr.Body.String())
+	}
+}
+
 func TestIssueRebaseRejectedWhenInProgress(t *testing.T) {
 	srv, store := testServer(t)
 	issue := model.Issue{

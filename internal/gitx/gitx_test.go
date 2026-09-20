@@ -91,6 +91,30 @@ func TestResolveBaseBranchUsesConfiguredAndFallback(t *testing.T) {
 	}
 }
 
+func TestListLocalBranches(t *testing.T) {
+	dir := initRepo(t, "main")
+	runGit(t, dir, "checkout", "-b", "hotfix_1")
+	names, err := ListLocalBranches(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundMain, foundHot := false, false
+	for _, n := range names {
+		if n == "main" {
+			foundMain = true
+		}
+		if n == "hotfix_1" {
+			foundHot = true
+		}
+	}
+	if !foundMain || !foundHot {
+		t.Fatalf("branches=%v", names)
+	}
+	if SanitizeBranchName("hotfix_1") != "hotfix_1" || SanitizeBranchName("../x") != "" {
+		t.Fatal("SanitizeBranchName")
+	}
+}
+
 func TestCheckoutBranchFromMaster(t *testing.T) {
 	dir := t.TempDir()
 	runGit(t, dir, "init", "-b", "master")
