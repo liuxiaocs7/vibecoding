@@ -12,6 +12,8 @@ import (
 //
 // Behavior:
 //   - If worktreePath already exists as a worktree for branch, it is reused.
+//   - If worktreePath exists but is stale (leftover dir, detached HEAD, wrong
+//     branch), it is switched back or replaced so a rework / re-run can proceed.
 //   - If branch does not exist: git worktree add -B branch worktreePath base
 //   - If branch exists without a worktree: git worktree add worktreePath branch
 func AddWorktree(repoPath, worktreePath, base, branch string) error {
@@ -44,11 +46,13 @@ func AddWorktree(repoPath, worktreePath, base, branch string) error {
 		if !st.IsDir() {
 			return fmt.Errorf("worktree path exists and is not a directory: %s", worktreePath)
 		}
-		// Directory exists: try to treat as reusable worktree for this branch.
-		if cur, err := CurrentBranch(worktreePath); err == nil && cur == branch {
+		reused, err := reuseOrReplaceWorktree(repoPath, worktreePath, branch)
+		if err != nil {
+			return err
+		}
+		if reused {
 			return nil
 		}
-		return fmt.Errorf("worktree path already exists: %s", worktreePath)
 	}
 	if err := os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return fmt.Errorf("create worktree parent: %w", err)
@@ -63,6 +67,30 @@ func AddWorktree(repoPath, worktreePath, base, branch string) error {
 		return fmt.Errorf("worktree add -B: %w", err)
 	}
 	return nil
+}
+
+// reuseOrReplaceWorktree recovers a path left behind by a previous Auto-Dev run.
+// It returns reused=true when the existing directory is now a worktree on branch.
+func reuseOrReplaceWorktree(repoPath, worktreePath, branch string) (bool, error) {
+	if cur, err := CurrentBranch(worktreePath); err == nil && cur == branch {
+		return true, nil
+	}
+	if insideWorkTree(worktreePath) && branchExists(worktreePath, branch) {
+		if _, err := run(worktreePath, "checkout", branch); err == nil {
+			if cur, err := CurrentBranch(worktreePath); err == nil && cur == branch {
+				return true, nil
+			}
+		}
+	}
+	if err := RemoveWorktree(repoPath, worktreePath); err != nil {
+		return false, fmt.Errorf("replace stale worktree path %s: %w", worktreePath, err)
+	}
+	return false, nil
+}
+
+func insideWorkTree(dir string) bool {
+	out, err := run(dir, "rev-parse", "--is-inside-work-tree")
+	return err == nil && strings.TrimSpace(out) == "true"
 }
 
 

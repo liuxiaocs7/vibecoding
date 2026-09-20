@@ -204,6 +204,81 @@ func TestRunPreservesMainDirtyAndHEAD(t *testing.T) {
 	}
 }
 
+func TestRunSecondPassReusesWorktree(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	writeHello := func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+		if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+			return executor.Result{}, err
+		}
+		return executor.Result{Changes: []model.SpecFileChange{{
+			FilePath: "hello.txt", RepoName: req.RepoName, Action: "create", Summary: "hello", ModifiedCode: "hello\n",
+		}}}, nil
+	}
+	r := &Runner{
+		Store:        store,
+		Hub:          NewHub(),
+		WorktreeRoot: wtRoot,
+		NewExecutor:  func(cfg model.ExecutorConfig) (executor.Executor, error) { return &fakeExecutor{name: "fake", run: writeHello}, nil },
+	}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	job2, err := store.CreateJob("issue-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.run(context.Background(), job2.ID); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(wtRoot, "issue-1", "repo-1")
+	if _, err := os.Stat(filepath.Join(wt, "hello.txt")); err != nil {
+		t.Fatalf("expected second pass to keep worktree: %v", err)
+	}
+}
+
+func TestRunReworkReplacesStaleWorktree(t *testing.T) {
+	repoPath := t.TempDir()
+	initGitRepo(t, repoPath)
+	store, job, _, _ := setupStoreJob(t, repoPath)
+	wtRoot := filepath.Join(t.TempDir(), "worktrees")
+	stale := filepath.Join(wtRoot, "issue-1", "repo-1")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stale, "junk.txt"), []byte("leftover\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeExecutor{
+		name: "fake-rework",
+		run: func(ctx context.Context, req executor.CodingRequest, emit executor.Emit, call int) (executor.Result, error) {
+			if err := os.WriteFile(filepath.Join(req.RepoPath, "hello.txt"), []byte("hello\n"), 0o644); err != nil {
+				return executor.Result{}, err
+			}
+			return executor.Result{Changes: []model.SpecFileChange{{
+				FilePath: "hello.txt", RepoName: req.RepoName, Action: "create", Summary: "hello", ModifiedCode: "hello\n",
+			}}}, nil
+		},
+	}
+	r := &Runner{
+		Store:        store,
+		Hub:          NewHub(),
+		WorktreeRoot: wtRoot,
+		NewExecutor:  func(cfg model.ExecutorConfig) (executor.Executor, error) { return fake, nil },
+	}
+	if err := r.run(context.Background(), job.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stale, "hello.txt")); err != nil {
+		t.Fatalf("expected rework to recreate worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(stale, "junk.txt")); !os.IsNotExist(err) {
+		t.Fatal("expected leftover junk to be replaced")
+	}
+}
+
 func TestRunKeepsWorktreeOnFailure(t *testing.T) {
 	repoPath := t.TempDir()
 	initGitRepo(t, repoPath)

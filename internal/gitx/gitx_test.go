@@ -203,6 +203,47 @@ func TestAddWorktreeReuseSamePath(t *testing.T) {
 	}
 }
 
+func TestAddWorktreeReplacesLeftoverDirectory(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "stale")
+	if err := os.MkdirAll(wt, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "junk.txt"), "leftover\n")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/retry"); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := CurrentBranch(wt)
+	if err != nil || cur != "ai-dev/retry" {
+		t.Fatalf("worktree branch=%q err=%v", cur, err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "junk.txt")); !os.IsNotExist(err) {
+		t.Fatal("expected leftover files to be replaced")
+	}
+}
+
+func TestAddWorktreeRecoversDetachedHEAD(t *testing.T) {
+	dir := initRepo(t, "main")
+	wt := filepath.Join(t.TempDir(), "detach")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/detach"); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(wt, "keep.txt"), "keep\n")
+	runGit(t, wt, "add", ".")
+	runGit(t, wt, "commit", "-m", "keep")
+	runGit(t, wt, "checkout", "--detach")
+	if err := AddWorktree(dir, wt, "main", "ai-dev/detach"); err != nil {
+		t.Fatal(err)
+	}
+	cur, err := CurrentBranch(wt)
+	if err != nil || cur != "ai-dev/detach" {
+		t.Fatalf("worktree branch=%q err=%v", cur, err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, "keep.txt")); err != nil {
+		t.Fatal("expected recovered worktree to keep committed files")
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	dir := initRepo(t, "main")
 	wt := filepath.Join(t.TempDir(), "gone")
