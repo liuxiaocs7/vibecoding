@@ -7,7 +7,7 @@ import { SubRequirementBar } from '../SubRequirementBar';
 import { FileText, Sparkles, Loader2, Download, Edit3, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { LLMRecoveryBar } from './LLMRecoveryBar';
 import { SendMessageOpts } from './useIssueChat';
-import { requirementAccepted, hasReqDoc, briefToReqMarkdown, coerceReqMarkdown, coerceDocMarkdown, legacySpecOnly, specReadyForDev, backlogBlockReason } from '../../lib/subreq';
+import { requirementAccepted, hasReqDoc, briefToReqMarkdown, coerceReqMarkdown, coerceDocMarkdown, legacySpecOnly, specReadyForDev, backlogBlockReason, designAccepted, designStale, hasDevSpecMarkdown } from '../../lib/subreq';
 import { api } from '../../lib/api';
 
 interface IssueSpecTabProps {
@@ -33,7 +33,7 @@ interface IssueSpecTabProps {
   handleSendMessage: (customPrompt?: string, opts?: SendMessageOpts) => Promise<void>;
   handleExportDevSpec: () => Promise<void>;
   handleExportReqDoc?: () => Promise<void>;
-  handleAcceptDesignToBacklog?: () => Promise<void> | void;
+  handleScheduleToBacklog?: () => Promise<void> | void;
   onUpdateIssue: (updatedIssue: Issue) => void;
   pendingLlm?: PendingLLMSession | null;
   onRetrySession?: () => void;
@@ -63,7 +63,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   handleSendMessage,
   handleExportDevSpec,
   handleExportReqDoc,
-  handleAcceptDesignToBacklog,
+  handleScheduleToBacklog,
   onUpdateIssue,
   pendingLlm,
   onRetrySession,
@@ -76,7 +76,27 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
   );
   const [editingReq, setEditingReq] = useState(false);
   const [convertingBrief, setConvertingBrief] = useState(false);
+  const [acceptingDesign, setAcceptingDesign] = useState(false);
   const changes: SpecFileChange[] = currentSpec?.fileChanges || [];
+
+  const canConfirmDesign =
+    issue.status === 'requirements' &&
+    hasDevSpecMarkdown(issue) &&
+    (requirementAccepted(issue) || legacySpecOnly(issue)) &&
+    !designStale(issue) &&
+    !designAccepted(issue);
+
+  const acceptDesign = async () => {
+    setAcceptingDesign(true);
+    try {
+      const saved = await api.acceptDesign(issue.id);
+      onUpdateIssue(saved);
+    } catch (e: any) {
+      window.alert(e?.message || 'accept design failed');
+    } finally {
+      setAcceptingDesign(false);
+    }
+  };
 
   const convertBriefToMarkdown = async () => {
     setConvertingBrief(true);
@@ -395,11 +415,27 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-                {issue.status === 'requirements' && handleAcceptDesignToBacklog && (
+                {canConfirmDesign && (
                   <button
                     type="button"
-                    onClick={() => void handleAcceptDesignToBacklog()}
-                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
+                    onClick={() => void acceptDesign()}
+                    disabled={acceptingDesign}
+                    className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                    title={t.acceptDesignBtn}
+                  >
+                    {acceptingDesign ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    )}
+                    {t.acceptDesignBtn}
+                  </button>
+                )}
+                {issue.status === 'requirements' && designAccepted(issue) && handleScheduleToBacklog && (
+                  <button
+                    type="button"
+                    onClick={() => void handleScheduleToBacklog()}
+                    className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white font-semibold text-xs rounded-lg flex items-center gap-1.5 transition-colors"
                     title={
                       specReadyForDev(issue)
                         ? t.acceptSpecBacklog
@@ -409,6 +445,11 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                     <CheckCircle2 className="w-3.5 h-3.5" />
                     {t.acceptSpecBacklog}
                   </button>
+                )}
+                {issue.status === 'requirements' && designAccepted(issue) && currentSpec?.acceptedAt && (
+                  <span className={`text-[10px] font-semibold ${themeConfig.textMuted}`}>
+                    {lang === 'zh' ? '设计已确认' : 'Design confirmed'}
+                  </span>
                 )}
                 <button
                   type="button"
@@ -509,6 +550,7 @@ export const IssueSpecTab: React.FC<IssueSpecTabProps> = ({
                       testCases: currentSpec?.testCases || [],
                       rawMarkdown: md,
                       updatedAt: new Date().toISOString(),
+                      acceptedAt: undefined,
                     };
                     if (activeSub) {
                       onUpdateIssue({

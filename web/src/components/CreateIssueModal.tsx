@@ -9,6 +9,7 @@ import {
 } from '../lib/attachments';
 import { branchNameForIssue, normalizeIssueKind } from '../lib/issueKind';
 import { ThemedSelect } from './ThemedSelect';
+import { AttachmentPreview } from './AttachmentPreview';
 import {
   X,
   PlusCircle,
@@ -24,6 +25,7 @@ import {
   Maximize2,
   Minimize2,
   Upload,
+  Eye,
 } from 'lucide-react';
 
 interface CreateIssueModalProps {
@@ -65,6 +67,7 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
   const [keepOpenAfterCreate, setKeepOpenAfterCreate] = useState(false);
   const [createdCount, setCreatedCount] = useState(0);
   const [attachments, setAttachments] = useState<IssueAttachment[]>([]);
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [attachErrors, setAttachErrors] = useState<string[]>([]);
   const [dragging, setDragging] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -354,25 +357,35 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
                       {attachments.map((att) => (
                         <li
                           key={att.id}
-                          className={`flex items-center gap-2.5 px-3 py-2 rounded-xl border ${themeConfig.inputBg} ${themeConfig.inputBorder}`}
+                          className={`flex items-center gap-1 px-2 py-1.5 rounded-xl border ${themeConfig.inputBg} ${themeConfig.inputBorder}`}
                         >
-                          {att.kind === 'image' && att.dataUrl ? (
-                            <img src={att.dataUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
-                          ) : att.kind === 'text' ? (
-                            <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
-                          ) : att.kind === 'image' ? (
-                            <ImageIcon className="w-4 h-4 text-purple-400 shrink-0" />
-                          ) : (
-                            <File className="w-4 h-4 text-slate-400 shrink-0" />
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <div className={`text-xs font-medium truncate ${themeConfig.textPrimary}`}>{att.name}</div>
-                            <div className={`text-[10px] ${themeConfig.textMuted}`}>
-                              {formatFileSize(att.size)}
-                              {att.kind === 'text' ? (lang === 'zh' ? ' · 将写入需求上下文' : ' · included in spec context') : ''}
-                              {att.kind === 'file' ? (lang === 'zh' ? ' · 无法解析文本' : ' · binary, name only') : ''}
+                          <button
+                            type="button"
+                            onClick={() => setPreviewId(att.id)}
+                            title={t.attachmentPreview}
+                            className="flex items-center gap-2.5 min-w-0 flex-1 px-1 py-0.5 text-left rounded-lg hover:bg-indigo-500/10 transition-colors"
+                          >
+                            {att.kind === 'image' && att.dataUrl ? (
+                              <img src={att.dataUrl} alt="" className="w-9 h-9 rounded-lg object-cover shrink-0" />
+                            ) : att.kind === 'text' ? (
+                              <FileText className="w-4 h-4 text-indigo-400 shrink-0" />
+                            ) : att.kind === 'image' ? (
+                              <ImageIcon className="w-4 h-4 text-purple-400 shrink-0" />
+                            ) : (
+                              <File className="w-4 h-4 text-slate-400 shrink-0" />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <div className={`text-xs font-medium truncate ${themeConfig.textPrimary}`}>{att.name}</div>
+                              <div className={`text-[10px] ${themeConfig.textMuted}`}>
+                                {formatFileSize(att.size)}
+                                {att.kind === 'text' ? (lang === 'zh' ? ' · 将写入需求上下文' : ' · included in spec context') : ''}
+                                {att.kind === 'file' ? (lang === 'zh' ? ' · 无法解析文本' : ' · binary, name only') : ''}
+                                {' · '}
+                                {t.attachmentPreview}
+                              </div>
                             </div>
-                          </div>
+                            <Eye className={`w-3.5 h-3.5 shrink-0 ${themeConfig.textMuted}`} />
+                          </button>
                           <button
                             type="button"
                             onClick={() => removeAttachment(att.id)}
@@ -579,6 +592,13 @@ export const CreateIssueModal: React.FC<CreateIssueModalProps> = ({
           </div>
         </form>
       </div>
+      <AttachmentPreview
+        attachments={attachments}
+        activeId={previewId}
+        onClose={() => setPreviewId(null)}
+        lang={lang}
+        themeStyle={themeStyle}
+      />
     </div>
   );
 };

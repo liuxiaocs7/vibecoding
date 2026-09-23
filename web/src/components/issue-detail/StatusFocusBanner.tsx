@@ -6,6 +6,8 @@ import {
   requirementAccepted,
   hasReqDoc,
   designStale,
+  designAccepted,
+  hasDevSpecMarkdown,
   hasUnverifiedModifies,
   legacySpecOnly,
   backlogBlockReason,
@@ -137,6 +139,26 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
     }
   };
 
+  const acceptDesign = async () => {
+    if (!hasDevSpecMarkdown(issue)) {
+      window.alert(lang === 'zh' ? '请先生成开发设计' : 'Generate a Dev Spec first');
+      return;
+    }
+    try {
+      const saved = await api.acceptDesign(issue.id);
+      onUpdateIssue(saved);
+      setActiveTab('spec');
+    } catch (e: any) {
+      window.alert(e?.message || 'accept design failed');
+    }
+  };
+
+  const canConfirmDesign =
+    hasDevSpecMarkdown(issue) &&
+    (requirementAccepted(issue) || legacySpecOnly(issue)) &&
+    !designStale(issue) &&
+    !designAccepted(issue);
+
   return (
     <>
       {issue.status === 'requirements' && (
@@ -209,8 +231,15 @@ export const StatusFocusBanner: React.FC<StatusFocusBannerProps> = ({
                   : t.extractSpecBtn}
               </button>
             )}
-            {(specReadyForDev(issue) || (hasReqDoc(issue) && !!issue.devSpec?.rawMarkdown)) &&
-              associatedRepos.length > 0 && (
+            {canConfirmDesign && (
+              <button
+                onClick={acceptDesign}
+                className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 rounded-lg text-emerald-900 dark:text-emerald-200 font-semibold text-[11px] transition-all"
+              >
+                {t.acceptDesignBtn}
+              </button>
+            )}
+            {specReadyForDev(issue) && associatedRepos.length > 0 && (
               <button
                 onClick={moveToBacklog}
                 className="px-2.5 py-1 bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 rounded-lg text-amber-900 dark:text-amber-200 font-semibold text-[11px] transition-all"

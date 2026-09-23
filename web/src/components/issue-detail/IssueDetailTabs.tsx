@@ -60,7 +60,7 @@ export const IssueDetailTabs: React.FC<IssueDetailTabsProps> = ({
         {(issue.devSpec || splitIssue) && <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />}
         {issue.status === 'backlog' && (
           <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-700 dark:text-amber-300 text-[9px] border border-amber-500/40 font-bold">
-            {lang === 'zh' ? '确认规范' : 'Focus'}
+            {lang === 'zh' ? '可启动' : 'Ready'}
           </span>
         )}
       </button>

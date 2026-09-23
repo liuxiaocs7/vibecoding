@@ -4,7 +4,7 @@ export function hasSubRequirements(issue: Issue): boolean {
   return (issue.subRequirements?.length ?? 0) > 0;
 }
 
-function hasDevSpecMarkdown(issue: Issue): boolean {
+export function hasDevSpecMarkdown(issue: Issue): boolean {
   if (hasSubRequirements(issue)) {
     const list = issue.subRequirements || [];
     return list.length > 0 && list.every((s) => !!s.devSpec?.rawMarkdown?.trim());
@@ -136,11 +136,41 @@ export function designStale(issue: Issue): boolean {
   return reqTouch > u;
 }
 
+/** Explicit Dev Spec confirmation via acceptedAt (status grandfather is UI-only). */
+export function designAccepted(issue: Issue): boolean {
+  if (legacySpecOnly(issue)) return true;
+  if (!hasDevSpecMarkdown(issue)) return false;
+  if (hasSubRequirements(issue)) {
+    for (const sub of issue.subRequirements || []) {
+      if (!sub.devSpec) return false;
+      const acceptedAt = sub.devSpec.acceptedAt?.trim();
+      if (!acceptedAt) return false;
+      const updatedAt = sub.devSpec.updatedAt?.trim();
+      if (updatedAt && updatedAt > acceptedAt) return false;
+    }
+    return true;
+  }
+  const acceptedAt = issue.devSpec?.acceptedAt?.trim();
+  if (!acceptedAt) return false;
+  const updatedAt = issue.devSpec?.updatedAt?.trim();
+  if (updatedAt && updatedAt > acceptedAt) return false;
+  return true;
+}
+
 export function specReadyForDev(issue: Issue): boolean {
   if (!hasDevSpecMarkdown(issue)) return false;
   if (legacySpecOnly(issue)) return true;
   if (!requirementAccepted(issue) || designStale(issue)) return false;
-  return true;
+  if (designAccepted(issue)) return true;
+  // Grandfather stored backlog+ without acceptedAt (pre-gate data / Auto-Dev).
+  switch (issue.status) {
+    case 'backlog':
+    case 'in_progress':
+    case 'in_review':
+    case 'completed':
+      return true;
+  }
+  return false;
 }
 
 /** Human-readable reason Spec is not ready for backlog (empty string if ready). */
@@ -153,13 +183,18 @@ export function backlogBlockReason(issue: Issue, lang: 'zh' | 'en' = 'zh'): stri
   }
   if (!requirementAccepted(issue) && hasReqDoc(issue)) {
     return lang === 'zh'
-      ? '请先确认需求文档，再排期开发设计'
-      : 'Accept the requirement document before scheduling';
+      ? '请先确认需求文档，再确认开发设计'
+      : 'Accept the requirement document before confirming design';
   }
   if (designStale(issue)) {
     return lang === 'zh'
-      ? '需求已变更，请重新生成开发设计后再排期'
-      : 'Requirement changed — regenerate the Dev Spec before backlog';
+      ? '需求已变更，请重新生成开发设计后再确认'
+      : 'Requirement changed — regenerate the Dev Spec before confirming';
+  }
+  if (!designAccepted(issue)) {
+    return lang === 'zh'
+      ? '请先确认开发设计，再排期到待执行'
+      : 'Confirm the Dev Spec before scheduling to backlog';
   }
   return lang === 'zh' ? '暂不可排期，请检查需求与开发设计' : 'Not ready for backlog yet';
 }

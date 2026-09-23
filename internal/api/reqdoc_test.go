@@ -66,8 +66,8 @@ func TestAcceptRequirementAndBacklogGates(t *testing.T) {
 		t.Fatalf("acceptedAt missing: %+v", accepted.ReqDoc)
 	}
 
+	// Still blocked until design is accepted
 	body, _ = json.Marshal(accepted)
-	// force status backlog
 	var m map[string]any
 	_ = json.Unmarshal(body, &m)
 	m["status"] = "backlog"
@@ -75,8 +75,33 @@ func TestAcceptRequirementAndBacklogGates(t *testing.T) {
 	req = httptest.NewRequest(http.MethodPut, "/api/issues/"+iss.ID, bytes.NewReader(body))
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
+	if rr.Code != 400 {
+		t.Fatalf("expected 400 before design accept, got %d %s", rr.Code, rr.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodPost, "/api/issues/"+iss.ID+"/accept-design", bytes.NewReader([]byte("{}")))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
-		t.Fatalf("backlog after accept status=%d body=%s", rr.Code, rr.Body.String())
+		t.Fatalf("accept-design status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var designAccepted model.Issue
+	if err := json.Unmarshal(rr.Body.Bytes(), &designAccepted); err != nil {
+		t.Fatal(err)
+	}
+	if designAccepted.DevSpec == nil || designAccepted.DevSpec.AcceptedAt == "" {
+		t.Fatalf("design acceptedAt missing: %+v", designAccepted.DevSpec)
+	}
+
+	body, _ = json.Marshal(designAccepted)
+	_ = json.Unmarshal(body, &m)
+	m["status"] = "backlog"
+	body, _ = json.Marshal(m)
+	req = httptest.NewRequest(http.MethodPut, "/api/issues/"+iss.ID, bytes.NewReader(body))
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("backlog after design accept status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -10,6 +10,7 @@ import { saveTextFile } from '../../lib/savefile';
 import { useIssueChat } from './useIssueChat';
 import { IssueDetailHeader } from './IssueDetailHeader';
 import { AssociatedReposBar } from './AssociatedReposBar';
+import { IssueBriefBar } from './IssueBriefBar';
 import { StatusFocusBanner } from './StatusFocusBanner';
 import { IssueDetailTabs } from './IssueDetailTabs';
 import { IssueChatTab } from './IssueChatTab';
@@ -211,7 +212,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- heal once per bad payload
   }, [issue.id, issue.reqDoc?.rawMarkdown, issue.devSpec?.rawMarkdown, issue.subRequirements]);
 
-  const handleAcceptDesignToBacklog = async () => {
+  const handleScheduleToBacklog = async () => {
     const reason = backlogBlockReason(issue, lang);
     if (reason) {
       setChatError(reason);
@@ -531,6 +532,14 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
           themeStyle={themeStyle}
         />
 
+        <IssueBriefBar
+          issue={issue}
+          canEdit={canEditRepos}
+          onUpdateIssue={onUpdateIssue}
+          lang={lang}
+          themeStyle={themeStyle}
+        />
+
         <StatusFocusBanner
           issue={issue}
           splitIssue={splitIssue}
@@ -605,7 +614,7 @@ export const IssueDetailModal: React.FC<IssueDetailModalProps> = ({
               handleSendMessage={handleSendMessage}
               handleExportDevSpec={handleExportDevSpec}
               handleExportReqDoc={handleExportReqDoc}
-              handleAcceptDesignToBacklog={handleAcceptDesignToBacklog}
+              handleScheduleToBacklog={handleScheduleToBacklog}
               onUpdateIssue={onUpdateIssue}
               pendingLlm={pendingLlm}
               onRetrySession={handleRetrySession}

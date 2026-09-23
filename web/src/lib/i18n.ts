@@ -96,8 +96,8 @@ export const TRANSLATIONS = {
     noReqToExport: 'No requirement document to export',
     sourceScanNotice: 'Design generation scans local repos and sends excerpts to your configured LLM.',
 
-    stageFocusBacklogTitle: 'Stage Focus: Confirm Dev Spec & Schedule Execution',
-    stageFocusBacklogDesc: 'Target branch prefix verified. Review implementation steps before launching AI Auto-Dev.',
+    stageFocusBacklogTitle: 'Stage Focus: Ready to Auto-Dev',
+    stageFocusBacklogDesc: 'Dev Spec confirmed. Review branch/setup, then launch AI Auto-Dev.',
 
     stageFocusProgressTitle: 'Stage Focus: AI Agent Autonomous Development',
     stageFocusProgressDesc: 'VibeBot is modifying code files, running TypeScript typechecks, and running tests.',
@@ -202,8 +202,8 @@ export const TRANSLATIONS = {
     customModel: 'CUSTOM',
 
     // Issue detail
-    acceptSpecBacklog: 'Accept Spec → Ready',
-    acceptDesignBtn: 'Confirm design → Ready',
+    acceptSpecBacklog: 'Schedule to Ready',
+    acceptDesignBtn: 'Confirm Dev Spec',
     deleteIssueConfirm: 'Delete this issue?',
     deleteIssueTitle: 'Delete issue',
     requestCancelled: 'Request cancelled',
@@ -311,6 +311,19 @@ export const TRANSLATIONS = {
     createIssueNeedOneRepo: 'Keep at least one linked Git repository',
     createIssueNoRepos: 'This project has no Git repos yet. Add one in project settings first.',
     attachmentCount: '{n} files',
+    attachmentPreview: 'Preview attachment',
+    attachmentNoPreview: 'This file cannot be previewed. Only text and images are shown.',
+    attachmentPrev: 'Previous file',
+    attachmentNext: 'Next file',
+    issueBrief: 'Original brief',
+    issueBriefHint: 'Title, description, and files from creation. Editable until development starts.',
+    issueBriefEdit: 'Edit',
+    issueBriefSave: 'Save',
+    issueBriefEmpty: 'No description yet',
+    issueBriefLocked: 'Locked after development starts',
+    issueBriefExpand: 'Expand',
+    issueBriefCollapse: 'Collapse',
+    issueBriefStaleNote: 'Saving updates the original brief only. Regenerate the requirement doc if the change should flow into the spec.',
   },
 
   zh: {
@@ -406,8 +419,8 @@ export const TRANSLATIONS = {
     noReqToExport: '没有可导出的需求文档',
     sourceScanNotice: '生成设计时会扫描本机关联仓库，并把源码摘要发给已配置的大模型。',
 
-    stageFocusBacklogTitle: '阶段侧重点: 确认 Dev Spec & 排期准备',
-    stageFocusBacklogDesc: '已匹配目标分支规则，确认开发步骤与涉及代码后即可启动自治编码。',
+    stageFocusBacklogTitle: '阶段侧重点: 可启动自治开发',
+    stageFocusBacklogDesc: '开发设计已确认。核对分支与环境后即可启动自治编码。',
 
     stageFocusProgressTitle: '阶段侧重点: AI 智能体自治编码与监控',
     stageFocusProgressDesc: 'VibeBot 正自动修改代码文件并执行 TypeScript 类型检查与单元测试。',
@@ -511,8 +524,8 @@ export const TRANSLATIONS = {
     customModel: '自定义',
 
     // Issue detail
-    acceptSpecBacklog: '确认开发设计 → 待执行',
-    acceptDesignBtn: '确认开发设计 → 待执行',
+    acceptSpecBacklog: '排期到待执行',
+    acceptDesignBtn: '确认开发设计',
     deleteIssueConfirm: '确定删除该 Issue？',
     deleteIssueTitle: '删除 Issue',
     requestCancelled: '请求已取消',
@@ -620,6 +633,19 @@ export const TRANSLATIONS = {
     createIssueNeedOneRepo: '请至少勾选一个关联的 Git 工程',
     createIssueNoRepos: '当前项目暂未关联 Git 仓库，请先在项目设置中添加 Git 工程。',
     attachmentCount: '{n} 个附件',
+    attachmentPreview: '预览附件',
+    attachmentNoPreview: '该文件无法预览，仅支持文本和图片。',
+    attachmentPrev: '上一个文件',
+    attachmentNext: '下一个文件',
+    issueBrief: '原始需求',
+    issueBriefHint: '创建时填写的标题、描述和附件。进入开发前可以修改。',
+    issueBriefEdit: '修改',
+    issueBriefSave: '保存',
+    issueBriefEmpty: '还没有需求描述',
+    issueBriefLocked: '开发开始后不可再改',
+    issueBriefExpand: '展开',
+    issueBriefCollapse: '收起',
+    issueBriefStaleNote: '保存只更新原始需求。若改动需要进入需求文档，请重新提炼。',
   },
 };
 

@@ -224,6 +224,7 @@ type DevSpec struct {
 	ImplementationSteps []string         `json:"implementationSteps"`
 	TestCases           []string         `json:"testCases"`
 	RawMarkdown         string           `json:"rawMarkdown"`
+	AcceptedAt          string           `json:"acceptedAt,omitempty"`
 	UpdatedAt           string           `json:"updatedAt"`
 }
 
@@ -468,10 +469,10 @@ func (iss *Issue) HasReqDoc() bool {
 // LegacySpecOnly is true for older issues that have a Dev Spec but never got a ReqDoc.
 // Those stay usable without the new requirement/design gate.
 func (iss *Issue) LegacySpecOnly() bool {
-	return iss != nil && !iss.HasReqDoc() && iss.hasDevSpecMarkdown()
+	return iss != nil && !iss.HasReqDoc() && iss.HasDevSpecMarkdown()
 }
 
-func (iss *Issue) hasDevSpecMarkdown() bool {
+func (iss *Issue) HasDevSpecMarkdown() bool {
 	if iss == nil {
 		return false
 	}
@@ -508,7 +509,7 @@ func (iss *Issue) RequirementAccepted() bool {
 		return false
 	}
 	if !iss.HasReqDoc() {
-		return iss.hasDevSpecMarkdown()
+		return iss.HasDevSpecMarkdown()
 	}
 	if strings.TrimSpace(iss.ReqDoc.AcceptedAt) == "" {
 		return false
@@ -576,19 +577,115 @@ func (iss *Issue) TouchReqDoc() {
 		return
 	}
 	iss.ReqDoc.UpdatedAt = NowISO()
+	iss.ReqDoc.AcceptedAt = ""
 	iss.DocPhase = DocPhaseRequirement
+}
+
+// DesignAccepted reports whether the Dev Spec has been explicitly confirmed
+// via AcceptedAt (ignores Issue.Status — callers that grandfather backlog+
+// must do so separately, e.g. SpecReadyForDev).
+func (iss *Issue) DesignAccepted() bool {
+	if iss == nil {
+		return false
+	}
+	if iss.LegacySpecOnly() {
+		return true
+	}
+	if !iss.HasDevSpecMarkdown() {
+		return false
+	}
+	if iss.HasSubRequirements() {
+		for _, sub := range iss.SubRequirements {
+			if sub.DevSpec == nil {
+				return false
+			}
+			acceptedAt := strings.TrimSpace(sub.DevSpec.AcceptedAt)
+			if acceptedAt == "" {
+				return false
+			}
+			updatedAt := strings.TrimSpace(sub.DevSpec.UpdatedAt)
+			if updatedAt != "" && updatedAt > acceptedAt {
+				return false
+			}
+		}
+		return true
+	}
+	if iss.DevSpec == nil {
+		return false
+	}
+	acceptedAt := strings.TrimSpace(iss.DevSpec.AcceptedAt)
+	if acceptedAt == "" {
+		return false
+	}
+	updatedAt := strings.TrimSpace(iss.DevSpec.UpdatedAt)
+	if updatedAt != "" && updatedAt > acceptedAt {
+		return false
+	}
+	return true
+}
+
+// AcceptDesign marks the current Dev Spec (or all sub-specs) as confirmed.
+func (iss *Issue) AcceptDesign() {
+	if iss == nil {
+		return
+	}
+	now := NowISO()
+	acceptOne := func(spec *DevSpec) {
+		if spec == nil {
+			return
+		}
+		if strings.TrimSpace(spec.UpdatedAt) == "" {
+			spec.UpdatedAt = now
+		}
+		spec.AcceptedAt = now
+		if spec.UpdatedAt > spec.AcceptedAt {
+			spec.AcceptedAt = spec.UpdatedAt
+		}
+	}
+	if iss.HasSubRequirements() {
+		for i := range iss.SubRequirements {
+			acceptOne(iss.SubRequirements[i].DevSpec)
+		}
+	} else {
+		acceptOne(iss.DevSpec)
+	}
+	iss.DocPhase = DocPhaseDesign
+}
+
+// TouchDevSpec bumps UpdatedAt and clears design acceptance when the Spec body changes.
+func (iss *Issue) TouchDevSpec() {
+	if iss == nil {
+		return
+	}
+	now := NowISO()
+	if iss.HasSubRequirements() {
+		for i := range iss.SubRequirements {
+			if iss.SubRequirements[i].DevSpec == nil {
+				continue
+			}
+			iss.SubRequirements[i].DevSpec.UpdatedAt = now
+			iss.SubRequirements[i].DevSpec.AcceptedAt = ""
+		}
+		return
+	}
+	if iss.DevSpec == nil {
+		return
+	}
+	iss.DevSpec.UpdatedAt = now
+	iss.DevSpec.AcceptedAt = ""
 }
 
 // SpecReadyForDev reports whether Auto-Dev / backlog can proceed.
 // Legacy (Dev Spec only): markdown present.
-// New flow: accepted ReqDoc, non-stale design, and design markdown.
-// fileChanges are recommended (UI warns) but not a hard gate — models sometimes
-// omit the array while still producing a usable Markdown design.
+// New flow: accepted ReqDoc, non-stale design, accepted design, and design markdown.
+// Issues already stored in backlog+ without AcceptedAt are grandfathered so
+// Auto-Dev keeps working on pre-gate data (status transition validation must
+// call DesignAccepted explicitly and must not rely on this grandfather alone).
 func (iss *Issue) SpecReadyForDev() bool {
 	if iss == nil {
 		return false
 	}
-	if !iss.hasDevSpecMarkdown() {
+	if !iss.HasDevSpecMarkdown() {
 		return false
 	}
 	if iss.LegacySpecOnly() {
@@ -597,7 +694,14 @@ func (iss *Issue) SpecReadyForDev() bool {
 	if !iss.RequirementAccepted() || iss.DesignStale() {
 		return false
 	}
-	return true
+	if iss.DesignAccepted() {
+		return true
+	}
+	switch iss.Status {
+	case StatusBacklog, StatusInProgress, StatusInReview, StatusCompleted:
+		return true
+	}
+	return false
 }
 
 // HasUnverifiedModifies is true when any modify/delete change is not verified against disk.

@@ -61,6 +61,14 @@ func TestReqDocGates(t *testing.T) {
 	if iss.DesignStale() {
 		t.Fatal("fresh design should not be stale")
 	}
+	if iss.SpecReadyForDev() {
+		t.Fatal("fresh design still needs explicit accept")
+	}
+
+	iss.AcceptDesign()
+	if !iss.DesignAccepted() {
+		t.Fatal("after AcceptDesign should be accepted")
+	}
 	if !iss.SpecReadyForDev() {
 		t.Fatal("accepted + fresh design should be ready")
 	}
@@ -85,6 +93,53 @@ func TestTouchReqDocClearsAcceptance(t *testing.T) {
 	}
 	if iss.DocPhase != DocPhaseRequirement {
 		t.Fatalf("phase=%q", iss.DocPhase)
+	}
+}
+
+func TestTouchDevSpecClearsAcceptance(t *testing.T) {
+	iss := &Issue{
+		Status: StatusRequirements,
+		ReqDoc: &ReqDoc{
+			RawMarkdown: "# req",
+			UpdatedAt:   "2024-01-01T00:00:00Z",
+			AcceptedAt:  "2024-01-01T00:00:00Z",
+		},
+		DevSpec: &DevSpec{
+			RawMarkdown: "# design",
+			UpdatedAt:   "2024-01-02T00:00:00Z",
+			AcceptedAt:  "2024-01-02T00:00:00Z",
+		},
+	}
+	if !iss.DesignAccepted() {
+		t.Fatal("precondition")
+	}
+	iss.TouchDevSpec()
+	if iss.DesignAccepted() {
+		t.Fatal("edit after design accept should require re-accept")
+	}
+	if iss.SpecReadyForDev() {
+		t.Fatal("touched design should not be ready")
+	}
+}
+
+func TestDesignAcceptedGrandfathersBacklog(t *testing.T) {
+	iss := &Issue{
+		Status: StatusBacklog,
+		ReqDoc: &ReqDoc{
+			RawMarkdown: "# req",
+			UpdatedAt:   "2024-01-01T00:00:00Z",
+			AcceptedAt:  "2024-01-01T00:00:00Z",
+		},
+		DevSpec: &DevSpec{
+			RawMarkdown: "# design",
+			UpdatedAt:   "2024-01-02T00:00:00Z",
+		},
+	}
+	if iss.DesignAccepted() {
+		t.Fatal("DesignAccepted must require AcceptedAt even in backlog")
+	}
+	if !iss.SpecReadyForDev() {
+		t.Fatal("SpecReadyForDev should grandfather stored backlog without AcceptedAt")
 	}
 }
 
@@ -141,6 +196,7 @@ func TestHasUnverifiedModifies(t *testing.T) {
 
 func TestSplitSpecReadyWithMarkdownDesigns(t *testing.T) {
 	iss := &Issue{
+		Status: StatusRequirements,
 		ReqDoc: &ReqDoc{
 			RawMarkdown: "# req",
 			UpdatedAt:   "2024-01-01T00:00:00Z",
@@ -164,6 +220,10 @@ func TestSplitSpecReadyWithMarkdownDesigns(t *testing.T) {
 			},
 		},
 	}
+	if iss.SpecReadyForDev() {
+		t.Fatal("design not yet accepted should not be ready")
+	}
+	iss.AcceptDesign()
 	if !iss.SpecReadyForDev() {
 		t.Fatal("accepted req + all sub markdown designs should be ready without fileChanges")
 	}

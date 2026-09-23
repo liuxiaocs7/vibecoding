@@ -90,6 +90,7 @@ export interface DevSpec {
   implementationSteps: string[];
   testCases: string[];
   rawMarkdown: string;
+  acceptedAt?: string;
   updatedAt: string;
 }
 

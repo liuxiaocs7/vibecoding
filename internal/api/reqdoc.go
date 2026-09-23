@@ -127,6 +127,35 @@ func (s *Server) handleAcceptRequirement(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, 200, saved)
 }
 
+func (s *Server) handleAcceptDesign(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	issue, err := s.Store.GetIssue(id)
+	if err != nil || issue == nil {
+		writeErr(w, 404, "issue not found")
+		return
+	}
+	if !issue.HasDevSpecMarkdown() {
+		writeErr(w, 400, "Dev Spec required before accept")
+		return
+	}
+	if issue.HasReqDoc() && !issue.RequirementAccepted() {
+		writeErr(w, 400, "accept requirement document before design")
+		return
+	}
+	if issue.DesignStale() {
+		writeErr(w, 400, "design is stale — regenerate after requirement changes")
+		return
+	}
+	issue.AcceptDesign()
+	issue.UpdatedAt = model.NowISO()
+	if err := s.Store.UpsertIssue(*issue); err != nil {
+		writeErr(w, 500, err.Error())
+		return
+	}
+	saved, _ := s.Store.GetIssue(issue.ID)
+	writeJSON(w, 200, saved)
+}
+
 // handleReqDocFromBrief converts the issue title/description/attachments into a Markdown ReqDoc
 // without calling the LLM (local template).
 func (s *Server) handleReqDocFromBrief(w http.ResponseWriter, r *http.Request) {

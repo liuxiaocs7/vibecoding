@@ -89,8 +89,11 @@ func validateStatusTransition(old, neu *model.Issue) error {
 		if neu.DesignStale() {
 			return fmt.Errorf("cannot move to backlog: design is stale after requirement changes; regenerate Dev Spec")
 		}
-		if !neu.SpecReadyForDev() {
-			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec with file changes (all sub-requirements need specs when split)")
+		if !neu.HasDevSpecMarkdown() {
+			return fmt.Errorf("cannot move to backlog without a Markdown Dev Spec (all sub-requirements need specs when split)")
+		}
+		if !neu.LegacySpecOnly() && !neu.DesignAccepted() {
+			return fmt.Errorf("cannot move to backlog without confirming the Dev Spec")
 		}
 		if len(neu.AssociatedRepoIDs) == 0 {
 			return fmt.Errorf("cannot move to backlog without associated repositories")
