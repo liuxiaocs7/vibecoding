@@ -32,6 +32,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/settings/model", s.handleGetModel)
 	mux.HandleFunc("PUT /api/settings/model", s.handlePutModel)
+	mux.HandleFunc("POST /api/settings/models", s.handleListModels)
 	mux.HandleFunc("GET /api/settings/executor", s.handleGetExecutor)
 	mux.HandleFunc("PUT /api/settings/executor", s.handlePutExecutor)
 	mux.HandleFunc("GET /api/executors", s.handleListExecutors)

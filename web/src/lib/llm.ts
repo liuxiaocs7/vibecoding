@@ -132,3 +132,31 @@ export async function testOpenAPIConnection(config: {
     return { success: false, error: err.message || 'Network error connecting to backend.' };
   }
 }
+
+/** Fetch the provider's model list. Never throws — returns an error string on failure. */
+export async function fetchAvailableModels(config: {
+  openAIBaseUrl: string;
+  openAIApiKey: string;
+  projectId?: string;
+}): Promise<{ models: string[]; error?: string }> {
+  try {
+    const res = await fetch('/api/settings/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(config),
+    });
+    const data = (await res.json()) as { models?: unknown; error?: string };
+    if (!res.ok || data.error) {
+      return {
+        models: [],
+        error: data.error || `HTTP ${res.status}: Failed to fetch model list.`,
+      };
+    }
+    return {
+      models: Array.isArray(data.models) ? data.models.filter((m): m is string => typeof m === 'string') : [],
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Network error connecting to backend.';
+    return { models: [], error: message };
+  }
+}

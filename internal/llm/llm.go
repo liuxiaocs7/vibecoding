@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -314,6 +315,86 @@ func (c *Client) TestOpenAPI(ctx context.Context, baseURL, apiKey, modelName str
 		},
 		OmitTemperature: true,
 	})
+}
+
+// modelsURL derives the GET /v1/models listing endpoint from a configured
+// chat-completions URL. The convention: strip the trailing
+// "/chat/completions" (or legacy "/completions") path segment and append
+// "/models", so "https://api.openai.com/v1/chat/completions" becomes
+// "https://api.openai.com/v1/models". If the URL already ends with "/models"
+// it is used as-is.
+func modelsURL(completions string) (string, error) {
+	base := strings.TrimSpace(completions)
+	if base == "" {
+		return "", fmt.Errorf("base URL required")
+	}
+	base = strings.TrimRight(base, "/")
+	for _, suffix := range []string{"/chat/completions", "/completions"} {
+		if strings.HasSuffix(base, suffix) {
+			return strings.TrimSuffix(base, suffix) + "/models", nil
+		}
+	}
+	if strings.HasSuffix(base, "/models") {
+		return base, nil
+	}
+	// Unknown shape (e.g. a gateway route): try "<base>/models" next to it.
+	return base + "/models", nil
+}
+
+// ListOpenAIModels fetches the model list from the provider's /v1/models
+// endpoint, derived from the configured chat-completions URL.
+func (c *Client) ListOpenAIModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
+	if err := ValidateBaseURL(baseURL); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(apiKey) == "" {
+		return nil, fmt.Errorf("API key required")
+	}
+	endpoint, err := modelsURL(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+strings.TrimSpace(apiKey))
+	resp, err := c.HTTP.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("OpenAPI models request failed [%d] url=%s: %s",
+			resp.StatusCode, endpoint, truncate(string(raw), 300))
+	}
+	var parsed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, fmt.Errorf("parse models response: %v", err)
+	}
+	seen := make(map[string]struct{}, len(parsed.Data))
+	models := make([]string, 0, len(parsed.Data))
+	for _, m := range parsed.Data {
+		id := strings.TrimSpace(m.ID)
+		if id == "" {
+			continue
+		}
+		if _, dup := seen[id]; dup {
+			continue
+		}
+		seen[id] = struct{}{}
+		models = append(models, id)
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("no models returned by %s", endpoint)
+	}
+	sort.Strings(models)
+	return models, nil
 }
 
 func firstNonEmpty(vals ...string) string {
