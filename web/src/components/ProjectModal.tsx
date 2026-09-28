@@ -4,7 +4,7 @@ import { DEFAULT_GLOBAL_MODEL_CONFIG, DEFAULT_BRANCH_PREFIX_CONFIG } from '../da
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { api } from '../lib/api';
-import { testOpenAPIConnection } from '../lib/llm';
+import { testOpenAPIConnection, fetchAvailableModels } from '../lib/llm';
 import {
   X,
   FolderPlus,
@@ -21,6 +21,7 @@ import {
   Loader2,
   AlertCircle,
   Sliders,
+  RefreshCw,
   BookOpen,
 } from 'lucide-react';
 
@@ -70,6 +71,34 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
   );
   const [testingLLM, setTestingLLM] = useState(false);
   const [llmTestResult, setLlmTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelsMsg, setModelsMsg] = useState('');
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    setModelsMsg('');
+    const res = await fetchAvailableModels({
+      openAIBaseUrl: customModelConfig.openAIBaseUrl.trim(),
+      // Blank key → server uses this project's stored custom key.
+      openAIApiKey: apiKeyDraft.trim(),
+      projectId: existingProject?.id,
+    });
+    setFetchingModels(false);
+    if (res.error) {
+      setAvailableModels([]);
+      setModelsMsg(t.fetchModelsFail.replace('{error}', res.error));
+      return;
+    }
+    if (res.models.length === 0) {
+      setAvailableModels([]);
+      setModelsMsg(t.fetchModelsEmpty);
+      return;
+    }
+    setAvailableModels(res.models);
+    setModelsMsg(t.fetchModelsOk.replace('{count}', String(res.models.length)));
+  };
+
 
   const [activeTab, setActiveTab] = useState<'basic' | 'repos' | 'branches' | 'llm'>('basic');
 
@@ -717,14 +746,45 @@ export const ProjectModal: React.FC<ProjectModalProps> = ({
 
                   <div>
                     <label className={`block text-xs font-medium mb-1 ${themeConfig.textPrimary}`}>{t.modelNameLabel}</label>
-                    <input
-                      type="text"
-                      value={customModelConfig.openAIModel}
-                      onChange={(e) =>
-                        setCustomModelConfig({ ...customModelConfig, openAIModel: e.target.value })
-                      }
-                      className={`w-full px-3 py-2 border rounded-lg text-xs font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
-                    />
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        list="project-model-options"
+                        value={customModelConfig.openAIModel}
+                        onChange={(e) =>
+                          setCustomModelConfig({ ...customModelConfig, openAIModel: e.target.value })
+                        }
+                        className={`flex-1 min-w-0 px-3 py-2 border rounded-lg text-xs font-mono ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                      />
+                      <datalist id="project-model-options">
+                        {availableModels.map((m) => (
+                          <option key={m} value={m} />
+                        ))}
+                      </datalist>
+                      <button
+                        type="button"
+                        onClick={handleFetchModels}
+                        disabled={
+                          fetchingModels ||
+                          !customModelConfig.openAIBaseUrl.trim() ||
+                          (!apiKeyDraft.trim() && !keyAlreadyConfigured)
+                        }
+                        title={t.fetchModelsBtn}
+                        className="shrink-0 px-3 py-2 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 rounded-lg text-xs font-semibold text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                      >
+                        {fetchingModels ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                        ) : (
+                          <RefreshCw className="w-3.5 h-3.5 text-indigo-500" />
+                        )}
+                        <span className="hidden sm:inline">{fetchingModels ? t.fetchModelsRunning : t.fetchModelsBtn}</span>
+                      </button>
+                    </div>
+                    {modelsMsg && (
+                      <p className={`text-[11px] mt-1 break-all ${availableModels.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : themeConfig.textMuted}`}>
+                        {modelsMsg}
+                      </p>
+                    )}
                   </div>
 
                   <div className="pt-1">

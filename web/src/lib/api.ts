@@ -167,6 +167,18 @@ export const api = {
   putModel: (config: ModelConfig) =>
     request<ModelConfig>('/api/settings/model', { method: 'PUT', body: JSON.stringify(config) }),
 
+  /** Fetch available model IDs from the provider's /v1/models endpoint.
+   *  Blank key/baseUrl (with projectId) makes the server use stored configs. */
+  listModels: (body: {
+    openAIBaseUrl?: string;
+    openAIApiKey?: string;
+    projectId?: string;
+  }) =>
+    request<{ models: string[]; error?: string }>('/api/settings/models', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
   getExecutor: () => request<import('../types').ExecutorConfig>('/api/settings/executor'),
   putExecutor: (config: import('../types').ExecutorConfig) =>
     request<import('../types').ExecutorConfig>('/api/settings/executor', {

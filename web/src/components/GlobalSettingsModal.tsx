@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ExecutorConfig, ExecutorProbe, ModelConfig } from '../types';
-import { testOpenAPIConnection } from '../lib/llm';
+import { testOpenAPIConnection, fetchAvailableModels } from '../lib/llm';
 import { Language, ThemeStyle, getTranslation } from '../lib/i18n';
 import { THEME_CONFIGS } from '../lib/theme';
 import { api } from '../lib/api';
@@ -17,6 +17,7 @@ import {
   Sliders,
   Maximize2,
   Minimize2,
+  RefreshCw,
 } from 'lucide-react';
 
 interface GlobalSettingsModalProps {
@@ -49,6 +50,33 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
 
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [fetchingModels, setFetchingModels] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const [modelsMsg, setModelsMsg] = useState('');
+
+  const handleFetchModels = async () => {
+    setFetchingModels(true);
+    setModelsMsg('');
+    const res = await fetchAvailableModels({
+      openAIBaseUrl: openAIBaseUrl.trim(),
+      // Blank key → server uses stored global key (same as test connection).
+      openAIApiKey: openAIApiKey.trim(),
+    });
+    setFetchingModels(false);
+    if (res.error) {
+      setAvailableModels([]);
+      setModelsMsg(t.fetchModelsFail.replace('{error}', res.error));
+      return;
+    }
+    if (res.models.length === 0) {
+      setAvailableModels([]);
+      setModelsMsg(t.fetchModelsEmpty);
+      return;
+    }
+    setAvailableModels(res.models);
+    setModelsMsg(t.fetchModelsOk.replace('{count}', String(res.models.length)));
+  };
+
 
   const [execType, setExecType] = useState<'llm' | 'agent'>('llm');
   const [execPreset, setExecPreset] = useState('claude');
@@ -270,13 +298,40 @@ export const GlobalSettingsModal: React.FC<GlobalSettingsModalProps> = ({
                 <label className={`block text-xs font-medium mb-1.5 ${themeConfig.textPrimary}`}>
                   模型标识 (Model Name)
                 </label>
-                <input
-                  type="text"
-                  value={openAIModel}
-                  onChange={(e) => setOpenAIModel(e.target.value)}
-                  placeholder="gpt-4o / deepseek-r1 / deepseek-chat"
-                  className={`w-full px-3.5 py-2.5 border rounded-xl focus:outline-none transition-colors font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    list="global-model-options"
+                    value={openAIModel}
+                    onChange={(e) => setOpenAIModel(e.target.value)}
+                    placeholder="gpt-4o / deepseek-r1 / deepseek-chat"
+                    className={`flex-1 min-w-0 px-3.5 py-2.5 border rounded-xl focus:outline-none transition-colors font-mono text-xs ${themeConfig.inputBg} ${themeConfig.inputText} ${themeConfig.inputBorder}`}
+                  />
+                  <datalist id="global-model-options">
+                    {availableModels.map((m) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                  <button
+                    type="button"
+                    onClick={handleFetchModels}
+                    disabled={fetchingModels || !openAIBaseUrl.trim() || (!openAIApiKey.trim() && !config.keyConfigured)}
+                    title={t.fetchModelsBtn}
+                    className="shrink-0 px-3 py-2.5 bg-indigo-500/20 hover:bg-indigo-500/30 border border-indigo-500/30 rounded-xl text-xs font-semibold text-indigo-800 dark:text-indigo-200 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+                  >
+                    {fetchingModels ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin text-indigo-500" />
+                    ) : (
+                      <RefreshCw className="w-3.5 h-3.5 text-indigo-500" />
+                    )}
+                    <span className="hidden sm:inline">{fetchingModels ? t.fetchModelsRunning : t.fetchModelsBtn}</span>
+                  </button>
+                </div>
+                {modelsMsg && (
+                  <p className={`text-[11px] mt-1 break-all ${availableModels.length > 0 ? 'text-emerald-600 dark:text-emerald-300' : themeConfig.textMuted}`}>
+                    {modelsMsg}
+                  </p>
+                )}
               </div>
 
               {/* Temperature */}
