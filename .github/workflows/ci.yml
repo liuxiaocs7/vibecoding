@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # git is required by the gitx/autodev integration tests.
+      - name: Ensure git identity for tests
+        run: |
+          git config --global user.name "ci"
+          git config --global user.email "ci@example.com"
+
+      - name: Vet
+        run: go vet ./internal/... ./cmd/...
+
+      - name: Test
+        run: go test -race ./internal/...
+
+      - name: Build server
+        run: |
+          mkdir -p cmd/vibecoding/dist
+          printf '%s\n' '<!doctype html><title>Vibecoding</title>' > cmd/vibecoding/dist/index.html
+          CGO_ENABLED=0 go build -tags server -o vibecoding-server ./cmd/vibecoding
+
+  frontend:
+    name: Frontend (Web)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint (tsc)
+        run: npm run lint
+
+      - name: Selftests
+        run: npm run test:diff
+
+      - name: Build
+        run: npm run build
