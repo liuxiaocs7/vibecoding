@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ymhhh/vibecoding/internal/llm"
 	"github.com/ymhhh/vibecoding/internal/model"
@@ -321,6 +322,97 @@ func TestAgentExecutorFakeCommand(t *testing.T) {
 	joined := strings.Join(logs, "\n")
 	if !strings.Contains(joined, "tool: Write") && !strings.Contains(joined, "hello-agent") {
 		t.Fatalf("logs=%v", logs)
+	}
+}
+
+func TestAgentExecutorDrainsAfterParentExit(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "lingering.sh")
+	// The parent exits at once; a grandchild inherits stdout, emits more
+	// output, and exits 300ms later. Run must capture both.
+	body := "#!/bin/sh\n" +
+		"echo '{\"type\":\"system\",\"session_id\":\"sess-lingering\"}'\n" +
+		"sh -c 'sleep 0.3; echo late-grandchild' &\n" +
+		"exit 0\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ex := NewAgentExecutor(model.ExecutorConfig{
+		Type: "agent", Preset: "custom", Command: script, Args: []string{"{prompt}"}, TimeoutSec: 30,
+	})
+	ex.Runner = func(ctx context.Context, name string, args []string, cwd string, stdin io.Reader) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = cwd
+		return cmd
+	}
+	var logs []string
+	emit := func(phase, msg, details string) {
+		logs = append(logs, phase+":"+msg)
+	}
+	res, err := ex.Run(context.Background(), CodingRequest{
+		RepoPath: dir,
+		RepoName: "demo",
+		Title:    "t",
+		Spec:     &model.DevSpec{RawMarkdown: "do it"},
+	}, emit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.SessionID != "sess-lingering" {
+		t.Fatalf("session=%q", res.SessionID)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "late-grandchild") {
+		t.Fatalf("missing grandchild output; logs=%v", logs)
+	}
+}
+
+func TestAgentExecutorPipeGraceBoundsLingeringWriters(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	script := filepath.Join(dir, "linger-forever.sh")
+	// The parent exits at once; the grandchild keeps the pipe open far past
+	// the short grace. Run must return promptly, keep the session line, and
+	// note the truncation.
+	body := "#!/bin/sh\n" +
+		"echo '{\"type\":\"system\",\"session_id\":\"sess-grace\"}'\n" +
+		"sh -c 'sleep 30' &\n" +
+		"exit 0\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ex := NewAgentExecutor(model.ExecutorConfig{
+		Type: "agent", Preset: "custom", Command: script, Args: []string{"{prompt}"}, TimeoutSec: 30,
+	})
+	ex.PipeGrace = 200 * time.Millisecond
+	ex.Runner = func(ctx context.Context, name string, args []string, cwd string, stdin io.Reader) *exec.Cmd {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.Dir = cwd
+		return cmd
+	}
+	var logs []string
+	emit := func(phase, msg, details string) {
+		logs = append(logs, phase+":"+msg)
+	}
+	start := time.Now()
+	res, err := ex.Run(context.Background(), CodingRequest{
+		RepoPath: dir,
+		RepoName: "demo",
+		Title:    "t",
+		Spec:     &model.DevSpec{RawMarkdown: "do it"},
+	}, emit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run blocked on a lingering descendant for %s", elapsed)
+	}
+	if res.SessionID != "sess-grace" {
+		t.Fatalf("session=%q", res.SessionID)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "truncated") {
+		t.Fatalf("missing truncation note; logs=%v", logs)
 	}
 }
 

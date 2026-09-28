@@ -23,7 +23,15 @@ type AgentExecutor struct {
 	Cfg      model.ExecutorConfig
 	LookPath func(string) (string, error)
 	Runner   CommandRunner
+	// PipeGrace bounds how long Run waits for output after the process has
+	// exited, in case a descendant inherited the pipe and lingers. Defaults
+	// to agentPipeGrace; tests shorten it.
+	PipeGrace time.Duration
 }
+
+// agentPipeGrace is how long Run keeps reading output after the process exits,
+// in case a descendant inherited the output pipe and lingers.
+const agentPipeGrace = 10 * time.Second
 
 func NewAgentExecutor(cfg model.ExecutorConfig) *AgentExecutor {
 	return &AgentExecutor{Cfg: cfg.Normalize()}
@@ -73,17 +81,31 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 	emit("agent", fmt.Sprintf("Starting %s in %s", resolved.DisplayName, req.RepoName), resolved.Command+" "+strings.Join(args, " "))
 
 	cmd := e.startCmd(runCtx, resolved.Command, args, req.RepoPath, stdin)
-	stdout, err := cmd.StdoutPipe()
+	// Own the output pipes instead of using StdoutPipe/StderrPipe: Cmd.Wait
+	// closes those parent ends as soon as the process exits, which races the
+	// scanners below and truncates output they have not read yet.
+	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
 		return Result{}, err
 	}
-	stderr, err := cmd.StderrPipe()
+	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
 		return Result{}, err
 	}
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
 	if err := cmd.Start(); err != nil {
+		stdoutR.Close()
+		stdoutW.Close()
+		stderrR.Close()
+		stderrW.Close()
 		return Result{}, fmt.Errorf("start %s: %w", resolved.Command, err)
 	}
+	// Drop the parent's write ends so the scanners can observe EOF.
+	stdoutW.Close()
+	stderrW.Close()
 
 	var stderrBuf bytes.Buffer
 	doneOut := make(chan struct{})
@@ -91,11 +113,11 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 	sessionCh := make(chan string, 1)
 	go func() {
 		defer close(doneOut)
-		sessionCh <- scanAgentOutput(stdout, emit, resolved.DisplayName)
+		sessionCh <- scanAgentOutput(stdoutR, emit, resolved.DisplayName)
 	}()
 	go func() {
 		defer close(doneErr)
-		sc := bufio.NewScanner(io.TeeReader(stderr, &stderrBuf))
+		sc := bufio.NewScanner(io.TeeReader(stderrR, &stderrBuf))
 		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 		for sc.Scan() {
 			line := sc.Text()
@@ -105,9 +127,41 @@ func (e *AgentExecutor) Run(ctx context.Context, req CodingRequest, emit Emit) (
 		}
 	}()
 
-	waitErr := cmd.Wait()
-	<-doneOut
-	<-doneErr
+	// Wait for the process and for the scanners to drain. These pipes are
+	// ours, so Cmd.Wait does not close them; the scanners see EOF only once
+	// every writer — including a descendant that inherited the pipe — is
+	// gone. A lingering descendant is bounded by PipeGrace.
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+	drained := make(chan struct{})
+	go func() {
+		<-doneOut
+		<-doneErr
+		close(drained)
+	}()
+
+	grace := e.PipeGrace
+	if grace <= 0 {
+		grace = agentPipeGrace
+	}
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+		select {
+		case <-drained:
+		case <-time.After(grace):
+			// A descendant still holds the pipes open; keep the output read
+			// so far and stop waiting (bounded instead of hanging forever).
+			stdoutR.Close()
+			stderrR.Close()
+			<-drained
+			emit("agent", fmt.Sprintf("%s output truncated: a descendant still holds the output pipe after %s", resolved.DisplayName, grace), "")
+		}
+	case <-drained:
+		waitErr = <-waitCh
+	}
+	stdoutR.Close()
+	stderrR.Close()
 	sessionID := <-sessionCh
 
 	if runCtx.Err() == context.DeadlineExceeded {
